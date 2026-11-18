@@ -27,6 +27,10 @@ export class CardError extends Error {}
 export function parseCard(bytes: Uint8Array, expectedId: string): Card {
   const text = decodeUtf8(bytes);
   if (text.includes("\r")) throw new CardError("the card has carriage returns; use Unix line endings");
+  // A card is shown on a terminal before it is signed. Escape codes could change what is seen there.
+  if (/[\u0000-\u0008\u000b-\u001f\u007f-\u009f]/.test(text)) {
+    throw new CardError("the card has control characters; a card is plain text");
+  }
   const lines = text.split("\n");
   if (lines[0] !== "---") throw new CardError('the first line must be "---"');
   const end = lines.indexOf("---", 1);

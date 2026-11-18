@@ -136,9 +136,12 @@ test("the shape of the file is checked", () => {
   assertRejected("---\nid: D-03\ngrade: prose\n---\n# D-03 \n", /title is empty|no heading/);
 });
 
-test("a file that is not UTF-8 is rejected", () => {
+test("a file that is not UTF-8, or that carries terminal escape codes, is rejected", () => {
   const bytes = Uint8Array.from([...new TextEncoder().encode(FULL), 0xff, 0xfe]);
   assert.throws(() => parseCard(bytes, "D-03"), /not valid UTF-8/);
+  assertRejected(FULL.replace("A shot", "A shot\u001b[1A\u001b[2K"), /control characters/);
+  assertRejected(`${FULL}\u0000`, /control characters/);
+  assert.equal(parse(`${FULL}\tA tab and an accent are fine: é ║\n`).id, "D-03");
 });
 
 test("the seven cards of this repository parse", () => {

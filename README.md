@@ -44,7 +44,8 @@ Only `id` and `grade` are required by the parser. A card above `prose` grade wit
 
 The parser is strict. It rejects unknown keys, duplicate keys, empty values, blank lines and comments in the
 front matter, an id that does not match the file name, and paths that are absolute, contain `..` or are spelled
-in a roundabout way (`./a`, `a//b`). Values are taken literally: no quotes, no multi-line values. Lists are
+in a roundabout way (`./a`, `a//b`). It also rejects control characters anywhere in the card, because the
+signer shows the title on a terminal. Values are taken literally: no quotes, no multi-line values. Lists are
 written on one line as `[a, b]`. Every `laws/*.md` file is a card.
 
 ## Commands
