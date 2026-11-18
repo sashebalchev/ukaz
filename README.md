@@ -113,13 +113,16 @@ There are no npm packages. Node 24 runs the TypeScript files as they are, and `t
 the few Node functions that are used.
 
 ```bash
-nix develop                              # node, ssh-keygen, tsc
+nix develop --override-input nixpkgs nixpkgs --no-write-lock-file    # node, ssh-keygen, tsc
 node src/cli.ts status                   # the command, straight from the source
 node --run test                          # every test except the bites
 node --run typecheck
 node src/cli.ts check && node src/cli.ts bite
 nix flake check --override-input nixpkgs nixpkgs --no-write-lock-file
 ```
+
+The flake does not pin nixpkgs and has no `flake.lock`. A `nix` command without `--no-write-lock-file` writes
+one; commit it if you want the pin.
 
 `test/laws/tNN-*.test.ts` is the check of card T-NN and `tNN-*.bite.test.ts` is its bite. A bite imports the
 property from its check and runs it against a variant that the bite file breaks on purpose, so every test in a
