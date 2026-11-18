@@ -32,6 +32,8 @@ declare const console: {
 
 interface Timer {
   hasRef(): boolean;
+  // A timer that is "unref"ed does not keep the program running.
+  unref(): this;
 }
 declare function setTimeout(callback: () => void, milliseconds: number): Timer;
 declare function clearTimeout(timer: Timer): void;
@@ -42,6 +44,10 @@ declare const process: {
   execPath: string;
   exitCode: number | undefined;
   kill(pid: number, signal?: string | number): true;
+  // Sets the permission bits that new files do not get, and returns the old setting.
+  umask(mask: number): number;
+  on(event: "SIGTERM" | "SIGINT", listener: () => void): void;
+  exit(code?: number): never;
 };
 
 interface ImportMeta {
@@ -52,9 +58,12 @@ interface ImportMeta {
 declare module "node:fs" {
   interface Stats {
     size: number;
+    mode: number;
+    mtimeMs: number;
     isFile(): boolean;
     isDirectory(): boolean;
     isSymbolicLink(): boolean;
+    isSocket(): boolean;
   }
   export const constants: { O_RDONLY: number; O_NOFOLLOW: number; O_NONBLOCK: number };
   export function existsSync(path: string): boolean;
@@ -62,9 +71,9 @@ declare module "node:fs" {
   export function readFileSync(file: string | number): Buffer;
   export function readFileSync(file: string | number, encoding: "utf8"): string;
   export function writeFileSync(path: string, data: string | Uint8Array, options?: { flag?: string; mode?: number }): void;
-  export function appendFileSync(path: string, data: string | Uint8Array): void;
+  export function appendFileSync(path: string, data: string | Uint8Array, options?: { mode?: number }): void;
   export function readdirSync(path: string): string[];
-  export function mkdirSync(path: string, options?: { recursive?: boolean }): string | undefined;
+  export function mkdirSync(path: string, options?: { recursive?: boolean; mode?: number }): string | undefined;
   export function mkdtempSync(prefix: string): string;
   export function rmSync(path: string, options?: { recursive?: boolean; force?: boolean }): void;
   export function realpathSync(path: string): string;
@@ -135,9 +144,17 @@ declare module "node:child_process" {
     input?: string | Uint8Array;
     timeout?: number;
   }
+  // What a child prints, when its stdio is "pipe". After setEncoding the chunks are text.
+  interface Output {
+    setEncoding(encoding: "utf8"): this;
+    on(event: "data", listener: (chunk: string) => void): this;
+  }
   interface ChildProcess {
     readonly pid: number | undefined;
-    on(event: "exit", listener: (code: number | null, signal: string | null) => void): this;
+    readonly stdout: Output | null;
+    readonly stderr: Output | null;
+    // "exit": the process ended. "close": it ended and everything it printed was read.
+    on(event: "exit" | "close", listener: (code: number | null, signal: string | null) => void): this;
     on(event: "error", listener: (error: Error) => void): this;
   }
   interface SpawnSyncResult<Output> {
@@ -160,6 +177,29 @@ declare module "node:child_process" {
   ): SpawnSyncResult<Buffer | null>;
 }
 
+declare module "node:net" {
+  // One connection. After setEncoding the chunks are text.
+  interface Socket {
+    readonly destroyed: boolean;
+    setEncoding(encoding: "utf8"): this;
+    write(data: string, callback?: (error?: Error | null) => void): boolean;
+    end(data?: string): this;
+    destroy(): this;
+    on(event: "data", listener: (chunk: string) => void): this;
+    on(event: "connect" | "end" | "close", listener: () => void): this;
+    on(event: "error", listener: (error: Error) => void): this;
+  }
+  interface Server {
+    maxConnections: number;
+    // A path: listen on a Unix socket with that file name.
+    listen(path: string, callback?: () => void): this;
+    close(callback?: (error?: Error) => void): this;
+    on(event: "error", listener: (error: Error) => void): this;
+  }
+  export function createServer(listener: (socket: Socket) => void): Server;
+  export function createConnection(path: string): Socket;
+}
+
 declare module "node:test" {
   export function test(name: string, body: () => void | Promise<void>): void;
   export function after(body: () => void | Promise<void>): void;
@@ -173,7 +213,8 @@ declare module "node:assert/strict" {
     deepEqual(actual: unknown, expected: unknown, message?: string): void;
     match(text: string, pattern: RegExp, message?: string): void;
     doesNotMatch(text: string, pattern: RegExp, message?: string): void;
-    throws(body: () => unknown, expected?: RegExp, message?: string): void;
+    // expected: a pattern for the error's message, or the class of the error.
+    throws(body: () => unknown, expected?: RegExp | (new (...values: never[]) => Error), message?: string): void;
     fail(message?: string): never;
   };
   export default assert;

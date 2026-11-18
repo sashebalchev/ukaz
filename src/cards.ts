@@ -28,16 +28,22 @@ export function loadCards(repo: string): Loaded[] {
 
 function loadCard(repo: string, id: string): Loaded {
   try {
-    const cardBytes = readFileSync(join(repo, "laws", `${id}.md`));
-    const card = parseCard(cardBytes, id);
-    const paths = hashedPaths(card);
-    const present = paths.ifPresent.filter((path) => existsSync(join(repo, path)));
-    const files = [...paths.required, ...present].map((path) => readHashed(repo, path));
+    const { card, cardBytes, files } = readCardFiles(repo, id);
     return { id, ok: true, card, hash: hashCard(cardBytes, files) };
   } catch (error) {
     if (error instanceof CardError) return { id, ok: false, problem: error.message };
     return { id, ok: false, problem: `laws/${id}.md cannot be read: ${String(error)}` };
   }
+}
+
+// The bytes of a card file and of every file that is hashed with it.
+export function readCardFiles(repo: string, id: string): { card: Card; cardBytes: Uint8Array; files: FrozenFile[] } {
+  const cardBytes = readFileSync(join(repo, "laws", `${id}.md`));
+  const card = parseCard(cardBytes, id);
+  const paths = hashedPaths(card);
+  const present = paths.ifPresent.filter((path) => existsSync(join(repo, path)));
+  const files = [...paths.required, ...present].map((path) => readHashed(repo, path));
+  return { card, cardBytes, files };
 }
 
 // A missing frozen file or figure is an error. It must never hash like an empty file.
