@@ -1,59 +1,59 @@
-// The bite of law T-04: the same property as the check, run against a signer that is broken on purpose.
+// The bite of law T-04: the same property as the check, run against signers that are broken on purpose.
 // Every test in this file must FAIL. If one passes, the check of T-04 has lost its teeth.
 
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { after, test } from "node:test";
+import { test } from "node:test";
+import { runSigner } from "../../signer/signer.ts";
 import {
   blockedFrozenLinkToOutside,
+  blockedNoTerminal,
   refusesCardLinkToOutside,
-  refusesFilesOverOneMegabyte,
+  signsOnlyOnTheExactWord,
 } from "./t04-signer.test.ts";
 import type { Signer } from "./t04-signer.test.ts";
 
-const SOURCES = join(import.meta.dirname, "../../src");
+function runWith(words: string[], answer: (word: string) => string | null): ReturnType<Signer> {
+  const printed: string[] = [];
+  const exitCode = runSigner(words, answer, (line) => printed.push(line));
+  return { exitCode, printed: printed.join("\n") };
+}
 
-// Broken on purpose: a signer that reads whatever a path leads to. It follows links out of the
-// repository and has no size limit. Everything else it does like the real one.
-const TRUSTING_SIGNER = `
-import { spawnSync } from "node:child_process";
-import { appendFileSync, readFileSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
-import { parseCard } from ${JSON.stringify(join(SOURCES, "card.ts"))};
-import { hashCard } from ${JSON.stringify(join(SOURCES, "hash.ts"))};
+// Broken on purpose: it does not wait for a person. It gives itself the word it asks for.
+const confirmsByItself: Signer = (words) => runWith(words, (word) => word);
 
-const words = process.argv.slice(2);
-const option = (name) => words[words.indexOf(name) + 1];
-const ids = words.filter((word, at) => !word.startsWith("--") && !String(words[at - 1]).startsWith("--")).sort();
-const repo = option("--repo");
+// Broken on purpose: it reads whatever a path leads to. It signs a copy of the repository in which
+// every symbolic link has been replaced by the file it points at, also a file outside the repository.
+const followsEveryLink: Signer = (words, typed) => {
+  const copy = mkdtempSync(join(tmpdir(), "laws-t04-bite-"));
+  try {
+    const repoAt = words.indexOf("--repo") + 1;
+    copyFollowingLinks(words[repoAt] ?? "", copy);
+    return runWith([...words.slice(0, repoAt), copy, ...words.slice(repoAt + 1)], () => typed);
+  } finally {
+    rmSync(copy, { recursive: true, force: true });
+  }
+};
 
-const lines = ids.map((id) => {
-  const cardBytes = readFileSync(join(repo, "laws", id + ".md"));
-  const card = parseCard(cardBytes, id);
-  const frozen = card.frozen.map((path) => ({ path, bytes: readFileSync(join(repo, path)) }));
-  return { id, title: card.title, hash: hashCard(cardBytes, frozen) };
+// Copies a folder. Where it meets a symbolic link, it copies what the link leads to.
+function copyFollowingLinks(from: string, to: string): void {
+  mkdirSync(to, { recursive: true });
+  for (const name of readdirSync(from)) {
+    if (statSync(join(from, name)).isDirectory()) copyFollowingLinks(join(from, name), join(to, name));
+    else writeFileSync(join(to, name), readFileSync(join(from, name)));
+  }
+}
+
+test("bite: a signer that confirms by itself fails the blocked case of no terminal", () => {
+  blockedNoTerminal(confirmsByItself);
 });
-for (const line of lines) console.log(line.id, line.hash, line.title);
-
-const manifest = lines.map((line) => line.id + " " + line.hash + "\\n").join("");
-appendFileSync(option("--log"), new Date().toISOString() + " " + manifest.replaceAll("\\n", " ") + "\\n");
-const signed = spawnSync("ssh-keygen", ["-Y", "sign", "-f", option("--key"), "-n", "laws"], { input: manifest, encoding: "utf8" });
-writeFileSync(join(option("--out"), "manifest"), manifest);
-writeFileSync(join(option("--out"), "manifest.sig"), signed.stdout);
-`;
-
-const folder = mkdtempSync(join(tmpdir(), "laws-t04-bite-"));
-after(() => rmSync(folder, { recursive: true, force: true }));
-writeFileSync(join(folder, "trusting-signer.mjs"), TRUSTING_SIGNER);
-const trusting: Signer = [process.execPath, join(folder, "trusting-signer.mjs")];
-
-test("bite: a signer that follows links fails the blocked case of a frozen link to outside", () => {
-  blockedFrozenLinkToOutside(trusting);
+test("bite: a signer that confirms by itself fails when another word is typed", () => {
+  signsOnlyOnTheExactWord(confirmsByItself);
 });
-test("bite: a signer that follows links fails on a card file that is a link to outside", () => {
-  refusesCardLinkToOutside(trusting);
+test("bite: a signer that follows every link fails the blocked case of a frozen link to outside", () => {
+  blockedFrozenLinkToOutside(followsEveryLink);
 });
-test("bite: a signer without a size limit fails on a file over 1 MB", () => {
-  refusesFilesOverOneMegabyte(trusting);
+test("bite: a signer that follows every link fails on a card file that is a link to outside", () => {
+  refusesCardLinkToOutside(followsEveryLink);
 });
