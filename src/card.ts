@@ -122,7 +122,7 @@ function findTitle(body: string[], id: string): string {
   const heading = body.find((line) => /^#{1,6} /.test(line));
   if (heading === undefined) throw new CardError("the body has no heading; its first heading is the title");
   let title = heading.replace(/^#+ +/, "").trim();
-  if (title.startsWith(`${id} `)) title = title.slice(id.length).trim();
+  if (title === id || title.startsWith(`${id} `)) title = title.slice(id.length).trim();
   if (title === "") throw new CardError("the title is empty");
   return title;
 }
