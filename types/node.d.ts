@@ -3,12 +3,9 @@
 // If you use a Node function that is missing here, add it with the signature from the Node documentation.
 
 interface Buffer extends Uint8Array {
-  toString(encoding?: "utf8" | "hex" | "latin1"): string;
-  equals(other: Uint8Array): boolean;
+  toString(encoding?: "utf8"): string;
 }
 declare const Buffer: {
-  from(data: string | readonly number[] | Uint8Array, encoding?: "utf8" | "hex" | "latin1"): Buffer;
-  concat(parts: readonly Uint8Array[]): Buffer;
   alloc(size: number, fill?: number): Buffer;
 };
 
@@ -26,7 +23,7 @@ declare const console: {
 };
 
 interface Timer {
-  unref(): Timer;
+  hasRef(): boolean;
 }
 declare function setTimeout(callback: () => void, milliseconds: number): Timer;
 declare function clearTimeout(timer: Timer): void;
@@ -36,22 +33,17 @@ declare const process: {
   env: Record<string, string | undefined>;
   execPath: string;
   exitCode: number | undefined;
-  pid: number;
-  platform: string;
-  cwd(): string;
   kill(pid: number, signal?: string | number): true;
 };
 
 interface ImportMeta {
   readonly main: boolean;
   readonly dirname: string;
-  readonly filename: string;
 }
 
 declare module "node:fs" {
   interface Stats {
     size: number;
-    mode: number;
     isFile(): boolean;
     isDirectory(): boolean;
     isSymbolicLink(): boolean;
@@ -65,21 +57,18 @@ declare module "node:fs" {
   export function mkdirSync(path: string, options?: { recursive?: boolean }): string | undefined;
   export function mkdtempSync(prefix: string): string;
   export function rmSync(path: string, options?: { recursive?: boolean; force?: boolean }): void;
-  export function cpSync(from: string, to: string, options?: { recursive?: boolean }): void;
   export function realpathSync(path: string): string;
   export function statSync(path: string): Stats;
   export function lstatSync(path: string): Stats;
   export function openSync(path: string, flags: string): number;
   export function closeSync(descriptor: number): void;
   export function symlinkSync(target: string, path: string): void;
-  export function chmodSync(path: string, mode: number): void;
 }
 
 declare module "node:path" {
   export const sep: string;
   export function join(...parts: string[]): string;
   export function resolve(...parts: string[]): string;
-  export function relative(from: string, to: string): string;
   export function dirname(path: string): string;
   export function basename(path: string): string;
 }
