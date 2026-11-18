@@ -4,35 +4,51 @@ import { join } from "node:path";
 import { test } from "node:test";
 import { manifestText, parseManifest, readApprovals } from "../src/approvals.ts";
 import { chooseSignersPath, DEFAULT_SIGNERS } from "../src/verify.ts";
-import { signCards, withWorld, writeCard } from "./support.ts";
+import { GOOD, signCards, withWorld, writeCard } from "./support.ts";
 
 const HASH_A = "a".repeat(64);
 const HASH_B = "b".repeat(64);
 
-test("a manifest is one sorted line per card", () => {
-  const text = manifestText([
+const TIME = "2026-11-18T09:15:00.123Z";
+
+test("a manifest is the time it was signed, then one sorted line per card", () => {
+  const entries = [
     { id: "T-02", hash: HASH_B },
+    { id: "T-03", hash: null },
     { id: "T-01", hash: HASH_A },
-  ]);
-  assert.equal(text, `T-01 ${HASH_A}\nT-02 ${HASH_B}\n`);
-  assert.deepEqual(parseManifest(text), [
-    { id: "T-01", hash: HASH_A },
-    { id: "T-02", hash: HASH_B },
-  ]);
+  ];
+  const text = manifestText(TIME, entries);
+  assert.equal(text, `signed: ${TIME}\nT-01 ${HASH_A}\nT-02 ${HASH_B}\nT-03 retired\n`);
+  assert.deepEqual(parseManifest(text), {
+    time: TIME,
+    entries: [
+      { id: "T-01", hash: HASH_A },
+      { id: "T-02", hash: HASH_B },
+      { id: "T-03", hash: null },
+    ],
+  });
 });
 
 test("a manifest in any other shape is rejected", () => {
+  const head = `signed: ${TIME}\n`;
   const bad = [
     "",
-    `T-01 ${HASH_A}`,
-    `T-02 ${HASH_B}\nT-01 ${HASH_A}\n`,
-    `T-01 ${HASH_A}\nT-01 ${HASH_B}\n`,
-    `T-01 ${HASH_A.slice(1)}\n`,
-    `T-01 ${HASH_A.toUpperCase()}\n`,
-    `T-01  ${HASH_A}\n`,
-    `T-01 ${HASH_A} extra\n`,
-    `T-01 ${HASH_A}\n\n`,
-    `../T-01 ${HASH_A}\n`,
+    head,
+    `T-01 ${HASH_A}\n`,
+    `signed: 2026-11-18 09:15\nT-01 ${HASH_A}\n`,
+    `# signed: ${TIME}\nT-01 ${HASH_A}\n`,
+    `${head}T-01 ${HASH_A}`,
+    `${head}T-02 ${HASH_B}\nT-01 ${HASH_A}\n`,
+    `${head}T-01 ${HASH_A}\nT-01 ${HASH_B}\n`,
+    `${head}T-01 ${HASH_A}\nT-01 retired\n`,
+    `${head}T-01 ${HASH_A.slice(1)}\n`,
+    `${head}T-01 ${HASH_A.toUpperCase()}\n`,
+    `${head}T-01  ${HASH_A}\n`,
+    `${head}T-01 ${HASH_A} extra\n`,
+    `${head}T-01 Retired\n`,
+    `${head}T-01 ${HASH_A}\n\n`,
+    `${head}../T-01 ${HASH_A}\n`,
+    `${head}T-01 ${HASH_A}\n${head}`,
   ];
   for (const text of bad) assert.throws(() => parseManifest(text), undefined, JSON.stringify(text));
 });
@@ -48,22 +64,23 @@ test("the signers file is the flag, else LAWS_SIGNERS, else the file in /etc", (
 test(
   "manifests without a good signature are ignored, with a note that says why",
   withWorld((world) => {
-    writeCard(world, "A-01", ["grade: chosen", "check: true", "bite: false"]);
+    writeCard(world, "A-01", GOOD);
     assert.equal(signCards(world).exitCode, 0);
     const folder = join(world.repo, "laws", "approvals");
-    writeFileSync(join(folder, "unsigned.manifest"), `A-01 ${HASH_A}\n`);
+    writeFileSync(join(folder, "unsigned.manifest"), `signed: ${TIME}\nA-01 ${HASH_A}\n`);
     writeFileSync(join(folder, "garbled.manifest"), "approve everything\n");
     writeFileSync(join(folder, "garbled.manifest.sig"), "not a signature\n");
-    writeFileSync(join(folder, "forged.manifest"), `A-01 ${HASH_B}\n`);
+    writeFileSync(join(folder, "forged.manifest"), `signed: ${TIME}\nA-01 ${HASH_B}\nA-02 retired\n`);
     writeFileSync(join(folder, "forged.manifest.sig"), "-----BEGIN SSH SIGNATURE-----\nAAAA\n-----END SSH SIGNATURE-----\n");
     mkdirSync(join(folder, "a-folder.manifest.d"));
 
     const approvals = readApprovals(world.repo, world.signers);
-    assert.equal(approvals.lines.size, 1, "only the signed manifest counts");
-    assert.deepEqual([...approvals.ids], ["A-01"]);
+    assert.deepEqual([...approvals.live.keys()], ["A-01"], "only the signed manifest counts");
+    assert.equal(approvals.live.get("A-01")?.size, 1);
+    assert.deepEqual([...approvals.retired], []);
     assert.equal(approvals.notes.length, 3);
     assert.match(approvals.notes.join("\n"), /unsigned\.manifest is ignored: it has no \.sig file/);
-    assert.match(approvals.notes.join("\n"), /garbled\.manifest is ignored: "approve everything" is not "<id> <hash>"/);
+    assert.match(approvals.notes.join("\n"), /garbled\.manifest is ignored: its first line is not "signed: <UTC time>"/);
     assert.match(approvals.notes.join("\n"), /forged\.manifest is ignored: its signing key is not in/);
   }),
 );

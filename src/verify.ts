@@ -6,9 +6,12 @@ import type { Loaded } from "./cards.ts";
 
 export const DEFAULT_SIGNERS = "/etc/laws/allowed_signers";
 
-export type State = "approved" | "changed" | "waiting" | "broken";
-export type CardState = { id: string; state: State; note: string };
-export type Lawbook = { cards: Loaded[]; states: CardState[]; notes: string[] };
+// approved, changed, waiting and broken are states of a card file. missing: a signed approval names the
+// card and its file is gone. retired: the newest signed line for the id retires it.
+export type State = "approved" | "changed" | "waiting" | "broken" | "missing" | "retired";
+// problem is null when this card does not stand in the way of the gate.
+export type CardState = { id: string; state: State; problem: string | null };
+export type Lawbook = { cards: Loaded[]; states: CardState[]; newest: string; notes: string[] };
 export type Verdict = { ok: boolean; reasons: string[] };
 
 // Where the signers file is looked for: the flag, else LAWS_SIGNERS, else /etc/laws/allowed_signers.
@@ -58,16 +61,33 @@ export function readLawbook(repo: string, signersFile: string): Lawbook {
   const cards = loadCards(repo);
   const approvals = readApprovals(repo, signersFile);
   const states = cards.map((card): CardState => {
-    if (!card.ok) return { id: card.id, state: "broken", note: `broken: ${card.problem}` };
-    if (approvals.lines.has(`${card.id} ${card.hash}`)) return { id: card.id, state: "approved", note: "" };
-    if (approvals.ids.has(card.id)) return { id: card.id, state: "changed", note: "changed since it was approved" };
-    return { id: card.id, state: "waiting", note: "waiting: never approved" };
+    const { id } = card;
+    if (!card.ok) return { id, state: "broken", problem: `broken: ${card.problem}` };
+    if (approvals.live.get(id)?.has(card.hash)) return { id, state: "approved", problem: null };
+    if (approvals.live.has(id)) return { id, state: "changed", problem: "changed since it was approved" };
+    if (approvals.retired.has(id)) {
+      const problem = `retired, but laws/${id}.md is still there: remove the file, or sign the card again with "laws sign ${id}"`;
+      return { id, state: "retired", problem };
+    }
+    return { id, state: "waiting", problem: "waiting: never approved" };
   });
-  return { cards, states, notes: approvals.notes };
+
+  // T-08: a card that a signed approval names cannot just disappear.
+  const present = new Set(cards.map((card) => card.id));
+  for (const id of approvals.live.keys()) {
+    if (present.has(id)) continue;
+    const problem = `missing: a signed approval names it, but laws/${id}.md is gone. Restore the file; to remove a law, run "laws retire ${id}" first`;
+    states.push({ id, state: "missing", problem });
+  }
+  for (const id of approvals.retired) {
+    if (!present.has(id)) states.push({ id, state: "retired", problem: null });
+  }
+  states.sort((a, b) => (a.id < b.id ? -1 : 1));
+  return { cards, states, newest: approvals.newest, notes: approvals.notes };
 }
 
-// Passes only if every card is approved as it is now. A repository without cards does not pass:
-// nothing was verified.
+// Passes only if every card is approved as it is now and no approved card is missing.
+// A repository without cards does not pass: nothing was verified.
 export function verifyRepo(repo: string, signersFlag: string | null): Verdict {
   let book: Lawbook;
   try {
@@ -76,8 +96,11 @@ export function verifyRepo(repo: string, signersFlag: string | null): Verdict {
     if (error instanceof LawsError) return { ok: false, reasons: [error.message] };
     throw error;
   }
-  const reasons = book.states.filter((card) => card.state !== "approved").map((card) => `${card.id}: ${card.note}`);
-  if (book.states.length === 0) reasons.push("there are no law cards in laws/");
+  const reasons: string[] = [];
+  for (const card of book.states) {
+    if (card.problem !== null) reasons.push(`${card.id}: ${card.problem}`);
+  }
+  if (book.cards.length === 0) reasons.push("there are no law cards in laws/");
   if (reasons.length > 0) reasons.push(...book.notes);
   return { ok: reasons.length === 0, reasons };
 }

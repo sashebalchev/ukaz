@@ -22,6 +22,7 @@ const CLI = join(import.meta.dirname, "../../src/cli.ts");
 const TEN = ["A-01", "A-02", "A-03", "A-04", "A-05", "A-06", "A-07", "A-08", "A-09", "A-10"];
 let repositoryCount = 0;
 let batchCount = 0;
+let clock = Date.UTC(2026, 0, 1);
 
 // ---- The property. The bite runs the same functions against broken gates. ----
 
@@ -165,6 +166,7 @@ function writeCard(repo: string, id: string): void {
 }
 
 // Stores a manifest of these cards as they are now, signed with the given key. Returns the manifest file.
+// A manifest starts with the time it was signed; here each one is a second later than the one before.
 function approve(repo: string, ids: string[], key: string): string {
   const cards = loadCards(repo);
   const line = (id: string): string => {
@@ -173,8 +175,9 @@ function approve(repo: string, ids: string[], key: string): string {
     return `${id} ${card.hash}\n`;
   };
   batchCount += 1;
+  clock += 1000;
   const manifest = join(repo, "laws", "approvals", `batch-${batchCount}.manifest`);
-  writeFileSync(manifest, [...ids].sort().map(line).join(""));
+  writeFileSync(manifest, `signed: ${new Date(clock).toISOString()}\n${[...ids].sort().map(line).join("")}`);
   run("ssh-keygen", ["-Y", "sign", "-f", key, "-n", "laws", manifest]);
   return manifest;
 }

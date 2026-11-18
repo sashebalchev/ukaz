@@ -35,7 +35,8 @@ const skipsTheSignature: Verify = (repo) => {
   const folder = join(repo, "laws", "approvals");
   const lines = new Set<string>();
   for (const name of readdirSync(folder).filter((file) => file.endsWith(".manifest"))) {
-    for (const entry of parseManifest(readFileSync(join(folder, name), "utf8"))) lines.add(`${entry.id} ${entry.hash}`);
+    const manifest = parseManifest(readFileSync(join(folder, name), "utf8"));
+    for (const entry of manifest.entries) lines.add(`${entry.id} ${entry.hash}`);
   }
   return loadCards(repo).every((card) => card.ok && lines.has(`${card.id} ${card.hash}`));
 };

@@ -21,6 +21,7 @@ const CASES = 200;
 const CLI = join(import.meta.dirname, "../../src/cli.ts");
 let repositoryCount = 0;
 let batchCount = 0;
+let clock = Date.UTC(2026, 0, 1);
 
 // ---- The property. The bite runs the same functions against broken ways to verify. ----
 
@@ -83,7 +84,8 @@ export function onlyCurrentOwnerSignaturesCount(verify: Verify, world: World, fi
       } else {
         const batch = batches[int(random, batches.length)];
         if (batch === undefined) continue;
-        const forged = manifestNow(repo, batch.ids);
+        const signedLine = readFileSync(batch.manifest, "utf8").split("\n")[0];
+        const forged = `${signedLine}\n${linesNow(repo, batch.ids)}`;
         if (forged !== readFileSync(batch.manifest, "utf8")) {
           writeFileSync(batch.manifest, forged);
           batch.intact = false;
@@ -141,8 +143,8 @@ function newRepository(world: World, name: string, ids: string[]): string {
   return repo;
 }
 
-// The manifest text for these cards as they are now.
-function manifestNow(repo: string, ids: string[]): string {
+// The manifest lines "<id> <hash>" for these cards as they are now.
+function linesNow(repo: string, ids: string[]): string {
   const cards = loadCards(repo);
   const line = (id: string): string => {
     const card = cards.find((candidate) => candidate.id === id);
@@ -153,10 +155,12 @@ function manifestNow(repo: string, ids: string[]): string {
 }
 
 // Stores a manifest of these cards as they are now, signed with the given key. Returns the manifest file.
+// A manifest starts with the time it was signed; here each one is a second later than the one before.
 function approve(repo: string, ids: string[], key: string): string {
   batchCount += 1;
+  clock += 1000;
   const manifest = join(repo, "laws", "approvals", `batch-${batchCount}.manifest`);
-  writeFileSync(manifest, manifestNow(repo, ids));
+  writeFileSync(manifest, `signed: ${new Date(clock).toISOString()}\n${linesNow(repo, ids)}`);
   run("ssh-keygen", ["-Y", "sign", "-f", key, "-n", "laws", manifest]);
   return manifest;
 }
