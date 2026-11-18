@@ -66,7 +66,7 @@ export function retireCommand(request: SignRequest, print: (line: string) => voi
 
   const name = askSigner(repo, signersFile, signerCommand, ids.map((id) => ({ id, hash: null })), book.newest);
   print(`retired ${ids.join(", ")}: stored laws/approvals/${name}.manifest and .manifest.sig`);
-  print(`Now remove ${ids.map((id) => `laws/${id}.md`).join(", ")} and the files that only they used.`);
+  print(`You can now remove ${ids.map((id) => `laws/${id}.md`).join(", ")}.`);
   return 0;
 }
 
