@@ -34,7 +34,7 @@ const signsByItself: Sign = (world, signerCommand) => {
   if (signerCommand !== null) return storesWhateverComesBack(world, signerCommand);
   const lines = loadCards(world.repo).map((card) => (card.ok ? `${card.id} ${card.hash}\n` : ""));
   const manifest = join(approvalsFolder(world), "batch.manifest");
-  writeFileSync(manifest, lines.join(""));
+  writeFileSync(manifest, `signed: ${new Date().toISOString()}\n${lines.join("")}`);
   const key = join(world.home, ".ssh", "id_ed25519");
   return spawnSync("ssh-keygen", ["-Y", "sign", "-f", key, "-n", "laws", manifest], { stdio: "ignore" }).status;
 };

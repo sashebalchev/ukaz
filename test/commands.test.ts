@@ -1,11 +1,11 @@
 import assert from "node:assert/strict";
-import { appendFileSync, existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
+import { spawnSync } from "node:child_process";
+import { appendFileSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { test } from "node:test";
-import { laws, lawsRaw, signCards, withWorld, writeCard } from "./support.ts";
+import { loadCards } from "../src/cards.ts";
+import { GOOD, laws, lawsRaw, retireCards, signCards, withWorld, writeCard } from "./support.ts";
 import type { World } from "./support.ts";
-
-const GOOD = ["grade: chosen", "check: true", "bite: false"];
 
 // The words of the status line of one card: id, grade, state, and the title as the rest.
 function statusOf(world: World, id: string): string[] {
@@ -61,9 +61,11 @@ test(
   withWorld((world) => {
     writeCard(world, "A-01", [...GOOD, "frozen: [missing.txt]"]);
     writeCard(world, "A-02", [...GOOD, "mood: good"]);
+    writeCard(world, "A-03", [...GOOD, "figure: figures/A-03.spec.json"]);
     const { printed } = laws(world, ["status"]);
-    assert.match(printed, /^A-01 .* broken .*frozen file missing\.txt is missing/m);
+    assert.match(printed, /^A-01 .* broken .*missing\.txt is missing or cannot be read/m);
     assert.match(printed, /^A-02 .* broken .*unknown key "mood"/m);
+    assert.match(printed, /^A-03 .* broken .*figures\/A-03\.spec\.json is missing or cannot be read/m);
     assert.equal(laws(world, ["gate"]).exitCode, 1);
   }),
 );
@@ -86,6 +88,21 @@ test(
     assert.equal(laws(world, ["show", "A-09"]).exitCode, 1);
     assert.equal(laws(world, ["show", "../A-01"]).exitCode, 1);
     assert.equal(laws(world, ["show"]).exitCode, 1);
+  }),
+);
+
+test(
+  "the figure is signed with the card: laws and the signer agree on the hash, and a redrawn picture needs a new signature",
+  withWorld((world) => {
+    writeCard(world, "A-01", [...GOOD, "figure: figures/A-01.spec.json"]);
+    mkdirSync(join(world.repo, "figures"));
+    writeFileSync(join(world.repo, "figures", "A-01.spec.json"), "{}\n");
+    writeFileSync(join(world.repo, "figures", "A-01.txt"), "tcp 22\nudp 41641\n");
+    const signed = signCards(world);
+    assert.equal(signed.exitCode, 0, signed.printed);
+    assert.equal(statusOf(world, "A-01")[2], "approved");
+    writeFileSync(join(world.repo, "figures", "A-01.txt"), "tcp 22\ntcp 8101\n");
+    assert.equal(statusOf(world, "A-01")[2], "changed");
   }),
 );
 
@@ -113,7 +130,7 @@ test(
     for (const id of ["A-01", "A-02", "A-03"]) writeCard(world, id, GOOD);
     const one = signCards(world, ["A-02"]);
     assert.equal(one.exitCode, 0, one.printed);
-    assert.match(one.printed, /A-02 +[0-9a-f]{64} +A law/, "the signer shows id, hash and title");
+    assert.match(one.printed, /sign +A-02 +[0-9a-f]{64} +A law/, "the signer shows id, hash and title");
     assert.deepEqual(["A-01", "A-02", "A-03"].map((id) => statusOf(world, id)[2]), ["waiting", "approved", "waiting"]);
 
     const rest = signCards(world);
@@ -122,6 +139,8 @@ test(
     assert.equal(laws(world, ["gate"]).printed, "open\n");
     assert.equal(approvals(world).length, 4, "two batches, each a manifest and a signature");
     for (const name of approvals(world)) assert.match(name, /^\d{8}T\d{6}\.\d{3}Z\.manifest(\.sig)?$/);
+    const manifest = readFileSync(join(world.repo, "laws", "approvals", approvals(world)[0] ?? ""), "utf8");
+    assert.equal((approvals(world)[0] ?? "").slice(0, 20), manifest.slice(8, 32).replace(/[-:]/g, ""), "the name is the signed time");
 
     const nothing = signCards(world);
     assert.equal(nothing.exitCode, 0);
@@ -134,7 +153,7 @@ test(
   "sign: one toothless card stops the whole batch, and an unknown card is an error",
   withWorld((world) => {
     writeCard(world, "A-01", GOOD);
-    writeCard(world, "A-02", ["grade: chosen", "check: true", "bite: true"]);
+    writeCard(world, "A-02", ["grade: chosen", "check: true", "bite: true", "bite-says: anything"]);
     const refused = signCards(world);
     assert.equal(refused.exitCode, 1);
     assert.match(refused.printed, /A-02 +TOOTHLESS/);
@@ -164,27 +183,113 @@ test(
 );
 
 test(
-  "bite: every bite must fail by itself",
+  "sign: the folder handed to the signer is private and is removed afterwards",
+  withWorld((world) => {
+    writeCard(world, "A-01", GOOD);
+    // laws calls: <signer command> --repo <repo> --out <folder> <id>... This one only looks at the folder.
+    const script = join(world.folder, "looks-at-out.sh");
+    const seen = join(world.folder, "seen.txt");
+    writeFileSync(script, `stat -c '%a %n' "$4" > '${seen}'\nexit 1\n`);
+    const refused = laws(world, ["sign", "--signer", `sh '${script}'`]);
+    assert.equal(refused.exitCode, 1);
+    const [mode, folder] = readFileSync(seen, "utf8").trim().split(" ");
+    assert.equal(mode, "700");
+    assert.ok(folder !== undefined && !existsSync(folder), "the folder must be gone after laws sign");
+  }),
+);
+
+test(
+  "sign: a signature dated before the newest one here is not stored",
+  withWorld((world) => {
+    writeCard(world, "A-01", GOOD);
+    writeCard(world, "A-02", GOOD);
+    // An approval of A-01 by the right key, dated far in the future.
+    const card = loadCards(world.repo)[0];
+    assert.ok(card?.ok);
+    const future = join(world.repo, "laws", "approvals", "future.manifest");
+    mkdirSync(join(world.repo, "laws", "approvals"));
+    writeFileSync(future, `signed: 2999-01-01T00:00:00.000Z\nA-01 ${card?.ok ? card.hash : ""}\n`);
+    assert.equal(spawnSync("ssh-keygen", ["-Y", "sign", "-f", world.key, "-n", "laws", future]).status, 0);
+    assert.equal(statusOf(world, "A-01")[2], "approved");
+
+    const refused = signCards(world);
+    assert.equal(refused.exitCode, 1);
+    assert.match(refused.printed, /not later than the newest one here/);
+    assert.equal(approvals(world).length, 2, "nothing was stored");
+  }),
+);
+
+test(
+  "retire: a signed retirement lets the file go, and the card does not come back by itself",
+  withWorld((world) => {
+    writeCard(world, "A-01", GOOD);
+    writeCard(world, "A-02", GOOD, "# A-02 Old rule\n");
+    const card = readFileSync(join(world.repo, "laws", "A-02.md"));
+    assert.equal(signCards(world).exitCode, 0);
+
+    // Deleted without a retirement: missing.
+    rmSync(join(world.repo, "laws", "A-02.md"));
+    assert.deepEqual(statusOf(world, "A-02").slice(0, 3), ["A-02", "-", "missing"]);
+    assert.match(laws(world, ["gate"]).printed, /^closed\n +A-02: missing: a signed approval names it/);
+    assert.equal(laws(world, ["verify"]).exitCode, 1);
+    assert.equal(retireCards(world, ["A-02"]).exitCode, 1, "a card that is gone cannot be retired");
+
+    // Restored and retired: the signer shows it, and the file may go.
+    writeFileSync(join(world.repo, "laws", "A-02.md"), card);
+    const retired = retireCards(world, ["A-02"]);
+    assert.equal(retired.exitCode, 0, retired.printed);
+    assert.match(retired.printed, /^ *retire +A-02 +Old rule$/m);
+    assert.match(readFileSync(world.log, "utf8"), / signed A-02=retired\n$/);
+    assert.equal(statusOf(world, "A-02")[2], "retired");
+    assert.match(laws(world, ["gate"]).printed, /^closed\n +A-02: retired, but laws\/A-02\.md is still there/);
+    assert.match(signCards(world).printed, /nothing to sign/, "a retired card is not signed again unless it is named");
+
+    rmSync(join(world.repo, "laws", "A-02.md"));
+    assert.equal(laws(world, ["gate"]).printed, "open\n");
+    assert.deepEqual(statusOf(world, "A-02").slice(0, 3), ["A-02", "-", "retired"]);
+
+    // The same file comes back: it needs a new signature, by name.
+    writeFileSync(join(world.repo, "laws", "A-02.md"), card);
+    assert.equal(laws(world, ["gate"]).exitCode, 1);
+    assert.equal(signCards(world, ["A-02"]).exitCode, 0);
+    assert.equal(statusOf(world, "A-02")[2], "approved");
+    assert.equal(laws(world, ["gate"]).printed, "open\n");
+
+    // The old retirement does not cover the new approval.
+    rmSync(join(world.repo, "laws", "A-02.md"));
+    assert.equal(statusOf(world, "A-02")[2], "missing");
+    assert.equal(laws(world, ["gate"]).exitCode, 1);
+    assert.equal(lawsRaw(["retire", "--repo", world.repo, "--signers", world.signers, "--signer", world.signerCommand]).exitCode, 1);
+  }),
+);
+
+test(
+  "bite: every bite must fail by itself, and say what the card says",
   withWorld((world) => {
     writeCard(world, "A-01", GOOD);
     writeCard(world, "A-02", ["grade: prose"]);
     const good = laws(world, ["bite"]);
     assert.equal(good.exitCode, 0, good.printed);
-    assert.match(good.printed, /^A-01 +bites/m);
+    assert.match(good.printed, /^A-01 +bites$/m);
     assert.match(good.printed, /^A-02 +prose, no bite$/m);
     assert.match(good.printed, /EVERY LAW BITES\n$/);
 
-    writeCard(world, "A-03", ["grade: chosen", "check: true", "bite: true"]);
+    const says = "bite-says: the blocked case was caught";
+    writeCard(world, "A-03", ["grade: chosen", "check: true", "bite: echo the blocked case was caught", says]);
     writeCard(world, "A-04", ["grade: chosen", "check: true"]);
-    writeCard(world, "A-05", ["grade: chosen", "check: true", "bite: no-such-program-anywhere"]);
-    writeCard(world, "A-06", ["grade: chosen", "check: true", "bite: sleep 30", "timeout: 1"]);
+    writeCard(world, "A-05", ["grade: chosen", "check: true", "bite: no-such-program-anywhere", says]);
+    writeCard(world, "A-06", ["grade: chosen", "check: true", "bite: sleep 30", "timeout: 1", says]);
+    writeCard(world, "A-07", ["grade: chosen", "check: true", "bite: echo the blocked case was caught; exit 1"]);
+    writeCard(world, "A-08", ["grade: chosen", "check: true", "bite: echo the blocked case was caught; sleep 30 & exit 1", says]);
     const bad = laws(world, ["bite"]);
     assert.equal(bad.exitCode, 1);
-    assert.match(bad.printed, /^A-01 +bites/m);
+    assert.match(bad.printed, /^A-01 +bites$/m);
     assert.match(bad.printed, /^A-03 +TOOTHLESS +the bite passed/m);
-    assert.match(bad.printed, /^A-04 +TOOTHLESS +no bite/m);
-    assert.match(bad.printed, /^A-05 +TOOTHLESS +the bite command could not be run/m);
+    assert.match(bad.printed, /^A-04 +TOOTHLESS +no bite,/m);
+    assert.match(bad.printed, /^A-05 +TOOTHLESS +the bite failed \(exit 127\) without printing "the blocked case was caught"/m);
     assert.match(bad.printed, /^A-06 +TOOTHLESS +the bite did not finish within 1 s/m);
+    assert.match(bad.printed, /^A-07 +TOOTHLESS +no bite-says/m);
+    assert.match(bad.printed, /^A-08 +TOOTHLESS +the bite left a process running/m);
     assert.match(bad.printed, /SOME LAWS ARE TOOTHLESS\n$/);
   }),
 );

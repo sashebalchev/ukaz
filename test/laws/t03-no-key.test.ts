@@ -51,13 +51,15 @@ export function allowedSignerSigns(sign: Sign): void {
     assert.equal(sign(world, signerWith(world, world.ownerKey)), 0, "laws sign failed with a good signer");
 
     const folder = join(world.repo, "laws", "approvals");
-    const stored = existsSync(folder) ? readdirSync(folder).sort() : [];
-    assert.equal(stored.length, 2, `expected one manifest and its signature, found: ${stored.join(", ")}`);
-    const [manifest, signature] = stored.map((name) => join(folder, name));
-    assert.ok(manifest?.endsWith(".manifest") && signature === `${manifest}.sig`, `unexpected names: ${stored.join(", ")}`);
+    const names = existsSync(folder) ? readdirSync(folder).sort() : [];
+    assert.equal(names.length, 2, `expected one manifest and its signature, found: ${names.join(", ")}`);
+    const [manifest, signature] = names.map((name) => join(folder, name));
+    assert.ok(manifest?.endsWith(".manifest") && signature === `${manifest}.sig`, `unexpected names: ${names.join(", ")}`);
 
-    const lines = loadCards(world.repo).map((card) => (card.ok ? `${card.id} ${card.hash}\n` : "broken\n"));
-    assert.equal(readFileSync(manifest ?? "", "utf8"), lines.join(""), "the stored manifest is not the two cards as they are");
+    const lines = loadCards(world.repo).map((card) => (card.ok ? `${card.id} ${card.hash}` : "broken"));
+    const stored = readFileSync(manifest ?? "", "utf8").split("\n");
+    assert.match(stored[0] ?? "", /^signed: /, "the stored manifest does not start with the time it was signed");
+    assert.deepEqual(stored.slice(1), [...lines, ""], "the stored manifest is not the two cards as they are");
     const options = ["-Y", "verify", "-f", world.signers, "-I", "owner", "-n", "laws", "-s", signature ?? ""];
     const verified = spawnSync("ssh-keygen", options, { input: readFileSync(manifest ?? ""), encoding: "utf8" });
     assert.equal(verified.status, 0, "the stored signature does not verify against the signers file");
@@ -112,9 +114,13 @@ export function readSources(): Map<string, string> {
   return new Map(files.map((name) => [name, readFileSync(join(SOURCES, name), "utf8")]));
 }
 
-// The real signer program with this key, as a signer command for "laws sign".
+// A signer command for "laws sign" that signs with this key. The signer needs a person at a terminal,
+// so the command is a stand-in: it runs the real signer and types the word that the signer asks for.
 export function signerWith(world: World, key: string): string {
-  return `'${process.execPath}' '${REAL_SIGNER}' --key '${key}' --log '${world.log}'`;
+  const standIn = join(world.folder, "signer-with-a-person.mjs");
+  const typesTheWord = "process.exitCode = runSigner(process.argv.slice(2), (word) => word, (line) => console.log(line));";
+  writeFileSync(standIn, `import { runSigner } from ${JSON.stringify(REAL_SIGNER)};\n${typesTheWord}\n`);
+  return `'${process.execPath}' '${standIn}' --key '${key}' --log '${world.log}'`;
 }
 
 function withWorld(body: (world: World) => void): void {
@@ -132,7 +138,8 @@ function withWorld(body: (world: World) => void): void {
     mkdirSync(join(world.repo, "laws"), { recursive: true });
     mkdirSync(join(world.home, ".ssh"), { recursive: true });
     for (const id of ["A-01", "A-02"]) {
-      const frontMatter = `---\nid: ${id}\ngrade: chosen\ncheck: true\nbite: false\n---\n`;
+      const bite = "bite: echo the blocked case was caught; exit 1\nbite-says: the blocked case was caught\n";
+      const frontMatter = `---\nid: ${id}\ngrade: chosen\ncheck: true\n${bite}---\n`;
       writeFileSync(join(world.repo, "laws", `${id}.md`), `${frontMatter}# ${id} A law\n`);
     }
     run("ssh-keygen", ["-q", "-t", "ed25519", "-N", "", "-f", world.ownerKey]);

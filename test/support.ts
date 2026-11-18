@@ -10,8 +10,9 @@ import { join } from "node:path";
 export const CLI = join(import.meta.dirname, "../src/cli.ts");
 export const SIGNER = join(import.meta.dirname, "../signer/signer.ts");
 
-// A temporary folder with an empty repository, a throwaway key, the signers file that names it,
-// and a signer command that runs the real signer program with that key.
+// A temporary folder with an empty repository, a throwaway key, the signers file that names it, and a
+// signer command. The signer needs a person at a terminal, so the command is a stand-in: it runs the
+// real signer with that key and types the word that the signer asks for.
 export type World = { folder: string; repo: string; signers: string; key: string; signerCommand: string; log: string };
 
 export type Printed = { exitCode: number | null; printed: string };
@@ -22,12 +23,15 @@ export function withWorld(body: (world: World) => void | Promise<void>): () => P
     try {
       const key = join(folder, "key");
       const log = join(folder, "signer.log");
+      const standIn = join(folder, "signer-with-a-person.mjs");
+      const typesTheWord = "process.exitCode = runSigner(process.argv.slice(2), (word) => word, (line) => console.log(line));";
+      writeFileSync(standIn, `import { runSigner } from ${JSON.stringify(SIGNER)};\n${typesTheWord}\n`);
       const world = {
         folder,
         repo: join(folder, "repo"),
         signers: join(folder, "allowed_signers"),
         key,
-        signerCommand: `'${process.execPath}' '${SIGNER}' --key '${key}' --log '${log}'`,
+        signerCommand: `'${process.execPath}' '${standIn}' --key '${key}' --log '${log}'`,
         log,
       };
       mkdirSync(join(world.repo, "laws"), { recursive: true });
@@ -57,7 +61,19 @@ export function laws(world: World, words: string[]): Printed {
   return lawsRaw([...words, "--repo", world.repo, "--signers", world.signers]);
 }
 
-// Approves cards through the real signer. With no ids: every card that is waiting or changed.
+// A card that can be signed: its bite fails and prints what the card says it prints.
+export const GOOD = [
+  "grade: chosen",
+  "check: true",
+  "bite: echo the blocked case was caught; exit 1",
+  "bite-says: the blocked case was caught",
+];
+
+// Approves cards through the signer. With no ids: every card that is waiting or changed.
 export function signCards(world: World, ids: string[] = []): Printed {
   return laws(world, ["sign", ...ids, "--signer", world.signerCommand]);
+}
+
+export function retireCards(world: World, ids: string[]): Printed {
+  return laws(world, ["retire", ...ids, "--signer", world.signerCommand]);
 }
