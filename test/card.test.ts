@@ -2,13 +2,14 @@ import assert from "node:assert/strict";
 import { readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { test } from "node:test";
-import { CardError, parseCard } from "../src/card.ts";
+import { CardError, hashedPaths, parseCard, renderedFigure } from "../src/card.ts";
 
 const FULL = `---
 id: D-03
 grade: generated
 check: pytest tests/laws/test_d03.py -k "start: guard"
 bite: pytest tests/laws/test_d03_bite.py
+bite-says: a shot started with an empty scale: no cup
 frozen: [tests/laws/test_d03.py, tests/laws/machine_states.py]
 scope: [src/dialin/cups.py]
 timeout: 120
@@ -50,6 +51,7 @@ test("a full card is read as written", () => {
     grade: "generated",
     check: 'pytest tests/laws/test_d03.py -k "start: guard"',
     bite: "pytest tests/laws/test_d03_bite.py",
+    biteSays: "a shot started with an empty scale: no cup",
     frozen: ["tests/laws/test_d03.py", "tests/laws/machine_states.py"],
     scope: ["src/dialin/cups.py"],
     timeout: 120,
@@ -65,6 +67,7 @@ test("only id and grade are required; the rest has defaults", () => {
     grade: "prose",
     check: null,
     bite: null,
+    biteSays: null,
     frozen: [],
     scope: [],
     timeout: 60,
@@ -107,6 +110,23 @@ test("a path has one spelling, and a list names a file once", () => {
   assertRejected(fullWith("frozen", "frozen: [a.py, [b.py]]"), /contains/);
 });
 
+test("the files hashed with a card are its frozen files, its figure and the rendered text of the figure", () => {
+  const card = parse(FULL);
+  assert.equal(renderedFigure(card), "figures/D-03.txt");
+  assert.deepEqual(hashedPaths(card), {
+    required: ["tests/laws/test_d03.py", "tests/laws/machine_states.py", "figures/D-03.spec.json"],
+    ifPresent: ["figures/D-03.txt"],
+  });
+
+  const noFigure = parse(fullWith("figure", null));
+  assert.equal(renderedFigure(noFigure), null);
+  assert.deepEqual(hashedPaths(noFigure).ifPresent, []);
+
+  // A figure that is not a .spec.json has no rendered text. A file named twice is hashed once.
+  const plain = parse(fullWith("figure", "figure: tests/laws/machine_states.py"));
+  assert.deepEqual(hashedPaths(plain), { required: ["tests/laws/test_d03.py", "tests/laws/machine_states.py"], ifPresent: [] });
+});
+
 test("the grade must be one of the five", () => {
   for (const grade of ["every-case", "bounded", "generated", "chosen", "prose"]) {
     assert.equal(parse(fullWith("grade", `grade: ${grade}`)).grade, grade);
@@ -144,15 +164,15 @@ test("a file that is not UTF-8, or that carries terminal escape codes, is reject
   assert.equal(parse(`${FULL}\tA tab and an accent are fine: é ║\n`).id, "D-03");
 });
 
-test("the seven cards of this repository parse", () => {
+test("the eight cards of this repository parse", () => {
   const folder = join(import.meta.dirname, "../laws");
   const ids = readdirSync(folder).filter((name) => name.endsWith(".md")).map((name) => name.slice(0, -3)).sort();
-  assert.deepEqual(ids, ["T-01", "T-02", "T-03", "T-04", "T-05", "T-06", "T-07"]);
+  assert.deepEqual(ids, ["T-01", "T-02", "T-03", "T-04", "T-05", "T-06", "T-07", "T-08"]);
   for (const id of ids) {
     const card = parseCard(readFileSync(join(folder, `${id}.md`)), id);
     assert.equal(card.id, id);
     assert.equal(card.frozen.length, 2, `${id} freezes its check and its bite`);
-    assert.ok(card.check !== null && card.bite !== null);
+    assert.ok(card.check !== null && card.bite !== null && card.biteSays !== null);
     assert.ok(!card.title.startsWith(id), "the title is shown without the id");
   }
 });

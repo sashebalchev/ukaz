@@ -3,7 +3,8 @@
 // If you use a Node function that is missing here, add it with the signature from the Node documentation.
 
 interface Buffer extends Uint8Array {
-  toString(encoding?: "utf8"): string;
+  toString(encoding?: "utf8" | "hex"): string;
+  includes(value: string | number, fromIndex?: number): boolean;
 }
 declare const Buffer: {
   alloc(size: number, fill?: number): Buffer;
@@ -48,9 +49,11 @@ declare module "node:fs" {
     isDirectory(): boolean;
     isSymbolicLink(): boolean;
   }
+  export const constants: { O_RDONLY: number; O_NOFOLLOW: number; O_NONBLOCK: number };
   export function existsSync(path: string): boolean;
-  export function readFileSync(path: string): Buffer;
-  export function readFileSync(path: string, encoding: "utf8"): string;
+  // The first argument is a path, or the number of an open file.
+  export function readFileSync(file: string | number): Buffer;
+  export function readFileSync(file: string | number, encoding: "utf8"): string;
   export function writeFileSync(path: string, data: string | Uint8Array, options?: { flag?: string; mode?: number }): void;
   export function appendFileSync(path: string, data: string | Uint8Array): void;
   export function readdirSync(path: string): string[];
@@ -60,8 +63,15 @@ declare module "node:fs" {
   export function realpathSync(path: string): string;
   export function statSync(path: string): Stats;
   export function lstatSync(path: string): Stats;
-  export function openSync(path: string, flags: string): number;
+  export function fstatSync(descriptor: number): Stats;
+  export function readlinkSync(path: string): string;
+  export function chmodSync(path: string, mode: number): void;
+  export function renameSync(from: string, to: string): void;
+  export function openSync(path: string, flags: string | number): number;
   export function closeSync(descriptor: number): void;
+  // Both return the number of bytes read or written.
+  export function readSync(descriptor: number, into: Uint8Array): number;
+  export function writeSync(descriptor: number, text: string): number;
   export function symlinkSync(target: string, path: string): void;
 }
 
@@ -83,6 +93,7 @@ declare module "node:crypto" {
     digest(encoding: "hex"): string;
   }
   export function createHash(algorithm: string): Hash;
+  export function randomBytes(size: number): Buffer;
 }
 
 declare module "node:child_process" {

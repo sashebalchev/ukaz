@@ -10,6 +10,7 @@ export type Card = {
   grade: Grade;
   check: string | null;
   bite: string | null;
+  biteSays: string | null;
   frozen: string[];
   scope: string[];
   timeout: number;
@@ -20,7 +21,7 @@ export type Card = {
 export const DEFAULT_TIMEOUT_SECONDS = 60;
 export const ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9-]*$/;
 
-const KNOWN_KEYS = ["id", "grade", "check", "bite", "frozen", "scope", "timeout", "figure"];
+const KNOWN_KEYS = ["id", "grade", "check", "bite", "bite-says", "frozen", "scope", "timeout", "figure"];
 
 export class CardError extends Error {}
 
@@ -54,6 +55,7 @@ export function parseCard(bytes: Uint8Array, expectedId: string): Card {
     grade,
     check: values.get("check") ?? null,
     bite: values.get("bite") ?? null,
+    biteSays: values.get("bite-says") ?? null,
     frozen: parseList("frozen", values.get("frozen")),
     scope: parseList("scope", values.get("scope")),
     timeout: parseTimeout(values.get("timeout")),
@@ -129,4 +131,20 @@ function findTitle(body: string[], id: string): string {
   if (title === id || title.startsWith(`${id} `)) title = title.slice(id.length).trim();
   if (title === "") throw new CardError("the title is empty");
   return title;
+}
+
+// The figure spec figures/NAME.spec.json is rendered to figures/NAME.txt, the text that laws show prints.
+export function renderedFigure(card: Card): string | null {
+  if (card.figure === null || !card.figure.endsWith(".spec.json")) return null;
+  return `${card.figure.slice(0, -".spec.json".length)}.txt`;
+}
+
+// The files that are hashed with the card file. Every frozen file and the figure must exist.
+// The rendered text of the figure is hashed when it exists: it is the picture a person sees.
+export function hashedPaths(card: Card): { required: string[]; ifPresent: string[] } {
+  const required = [...card.frozen];
+  if (card.figure !== null && !required.includes(card.figure)) required.push(card.figure);
+  const rendered = renderedFigure(card);
+  const ifPresent = rendered !== null && !required.includes(rendered) ? [rendered] : [];
+  return { required, ifPresent };
 }
