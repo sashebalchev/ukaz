@@ -7,7 +7,7 @@ import type { Entry, Manifest } from "./approvals.ts";
 import { teethOf } from "./bite.ts";
 import { LawsError, readCardFiles } from "./cards.ts";
 import type { GoodCard } from "./cards.ts";
-import { askLaptop } from "./laptop.ts";
+import { askHelper } from "./laptop.ts";
 import { passkeyProblem } from "./passkey.ts";
 import { postRequest, serverAddress, waitForApproval } from "./client.ts";
 import { requestText } from "./request.ts";
@@ -19,17 +19,21 @@ export type SignRequest = {
   repo: string;
   ids: string[];
   signerCommand: string | null; // --signer
-  laptop: string | null; // --laptop: the socket of the laptop signer
   server: string | null; // --server: the address of the signing server
-  phone: boolean; // --phone: wait for the phone
+  laptop: string | null; // --laptop: the socket of the laptop's fingerprint helper
+  phone: boolean; // --phone: wait for the phone, and do not offer the finger
   signersFlag: string | null;
 };
 
+// Where the laptop's fingerprint helper listens when it is installed as a service.
+export const HELPER_SOCKET = "/run/laws-signer/socket";
+
 // The ways to get a signature. This program holds no key and makes no signature: it always asks.
+//   server    the signing server: the cards wait there until you approve them, on the phone, or with
+//             your finger on the laptop. helper: the socket of the fingerprint helper to ask, or null
+//             to wait for the phone only. named: that socket was given with --laptop.
 //   command   a signer command, usually "sudo laws-signer ...": it asks for a typed word at the terminal
-//   laptop    the laptop signer, a service behind a socket: it asks for one finger on the reader
-//   server    the signing server: the cards wait there until you approve them on the phone
-type Way = { kind: "command"; command: string } | { kind: "laptop"; socket: string } | { kind: "server"; address: string };
+type Way = { kind: "server"; address: string; helper: string | null; named: boolean } | { kind: "command"; command: string };
 
 // One card of a batch: to approve as it is now, or to retire.
 type Asked = { card: GoodCard; retire: boolean };
@@ -100,7 +104,8 @@ export async function retireCommand(request: SignRequest, print: (line: string) 
 // approved, because you may have accepted fewer cards than were sent, and it runs laws verify.
 function report(request: SignRequest, way: Way, verb: string, asked: Asked[], stored: Stored, print: (line: string) => void): void {
   const ids = stored.done.map(({ card }) => card.id).join(", ");
-  print(`${verb} ${ids}: stored laws/approvals/${stored.name}.manifest and ${stored.proof}`);
+  const where = way.kind !== "server" ? "" : stored.proof === ".passkey.json" ? " on the phone" : " with your finger on the laptop";
+  print(`${verb} ${ids}${where}: stored laws/approvals/${stored.name}.manifest and ${stored.proof}`);
   if (way.kind !== "server") return;
 
   for (const line of linesOf(stored.done)) print(listLine(line));
@@ -111,14 +116,14 @@ function report(request: SignRequest, way: Way, verb: string, asked: Asked[], st
   for (const reason of verdict.reasons) print(`  ${reason}`);
 }
 
-// One way, and only one. A flag wins over LAWS_SIGNER. LAWS_SIGNER holds a signer command, or
-// "laptop:<socket>" or "server:<address>" to make one of those the usual way.
+// One way, and only one. A flag wins over LAWS_SIGNER. LAWS_SIGNER holds "server:<address>" to make
+// the signing server the usual way, or a signer command.
 function wayOf(request: SignRequest): Way {
-  const flags = [request.signerCommand, request.laptop, request.server].filter((flag) => flag !== null);
-  if (flags.length > 1) throw new LawsError("give only one of --signer, --laptop and --server. Nothing was written.");
-  if (request.laptop !== null) return { kind: "laptop", socket: request.laptop };
-  if (request.server !== null) return { kind: "server", address: request.server };
-  const value = request.signerCommand ?? process.env["LAWS_SIGNER"] ?? "";
+  if (request.signerCommand !== null && request.server !== null) {
+    throw new LawsError("give only one of --server and --signer. Nothing was written.");
+  }
+  if (request.phone && request.laptop !== null) throw new LawsError("give only one of --phone and --laptop. Nothing was written.");
+  const value = request.server !== null ? `server:${request.server}` : (request.signerCommand ?? process.env["LAWS_SIGNER"] ?? "");
   if (value === "") {
     throw new LawsError(
       'no signer: pass --server <address> or --signer "<command>", or set LAWS_SIGNER, for example ' +
@@ -126,8 +131,13 @@ function wayOf(request: SignRequest): Way {
         '--signer "sudo laws-signer --key /root/laws/key --log /var/log/laws-signer.log". Nothing was written.',
     );
   }
-  if (value.startsWith("laptop:")) return { kind: "laptop", socket: value.slice("laptop:".length) };
-  if (value.startsWith("server:")) return { kind: "server", address: value.slice("server:".length) };
+  if (value.startsWith("server:")) {
+    const helper = request.phone ? null : (request.laptop ?? HELPER_SOCKET);
+    return { kind: "server", address: value.slice("server:".length), helper, named: request.laptop !== null };
+  }
+  if (request.phone || request.laptop !== null) {
+    throw new LawsError("--phone and --laptop go with the signing server (--server). A signer command asks at the terminal. Nothing was written.");
+  }
   return { kind: "command", command: value };
 }
 
@@ -161,10 +171,7 @@ async function askAndStore(
   try {
     chmodSync(folder, 0o700); // private to this user, whatever the defaults are
     const began = Date.now();
-    let signed: Signed;
-    if (way.kind === "command") signed = askCommand(repo, way.command, entries, folder);
-    else if (way.kind === "laptop") signed = await askLaptopSigner(repo, way.socket, asked, print);
-    else signed = await askServer(repo, way.address, asked, print);
+    const signed = way.kind === "command" ? askCommand(repo, way.command, entries, folder) : await askServer(repo, way, asked, print);
     const { manifest, signature, passkey } = signed;
 
     const text = manifest.toString("utf8");
@@ -237,41 +244,45 @@ function readBack(file: string): Buffer {
   }
 }
 
-// Sends the cards to the laptop signer: the bytes of each card and of the files hashed with it.
-// The service answers with the list as it computed it. That list is printed, and only if it is the
-// list this program computed itself is the person told to touch the reader.
-async function askLaptopSigner(repo: string, socket: string, asked: Asked[], print: (line: string) => void): Promise<Signed> {
-  const answer = await askLaptop(socket, requestOf(repo, asked), ({ list, finger, seconds }) => {
-    print(`the laptop signer at ${socket} computed this list:`);
-    for (const line of list) print(listLine(line));
-    if (!sameList(list, linesOf(asked))) {
-      throw new LawsError(
-        "the laptop signer computed a different list than this program. A file may have changed just now. " +
-          "Do not touch the reader. Nothing was stored.",
-      );
-    }
-    print(`Put your ${finger.replaceAll("-", " ")} on the fingerprint reader now. You have ${seconds} seconds.`);
-  });
-  return { manifest: Buffer.from(answer.manifest, "utf8"), signature: Buffer.from(answer.signature, "utf8"), passkey: null };
-}
+// The one flow through the signing server. It posts the cards, and the server answers with the list as
+// it computed it. Only if that is the list this program computed itself does it go on: it prints the
+// address for the phone, and if the laptop's fingerprint helper is there, it asks the helper to approve
+// the request with your finger. Then it waits until the server hands out a signature, from either.
+async function askServer(repo: string, way: Way & { kind: "server" }, asked: Asked[], print: (line: string) => void): Promise<Signed> {
+  const base = serverAddress(way.address);
+  const helper = way.helper !== null && existsSync(way.helper) ? way.helper : null;
+  if (way.named && helper === null) throw new LawsError(`there is no fingerprint helper at ${way.helper}. Nothing was sent.`);
 
-// Posts the cards to the signing server and waits until the request is approved there. The server
-// answers with the list as it computed it. Only if that is the list this program computed itself is
-// the address for the phone printed.
-async function askServer(repo: string, address: string, asked: Asked[], print: (line: string) => void): Promise<Signed> {
-  const base = serverAddress(address);
   const posted = await postRequest(base, requestOf(repo, asked));
   print(`the signing server at ${base} computed this list:`);
   for (const line of posted.list) print(listLine(line));
   if (!sameList(posted.list, linesOf(asked))) {
     throw new LawsError(
       "the signing server computed a different list than this program. A file may have changed just now. " +
-        "Do not sign it on the phone. Nothing was stored.",
+        "Do not approve it. Nothing was stored.",
     );
   }
-  print("Open this address on your phone, read the cards there, and sign:");
+  print("To read and sign on the phone, open this address there:");
   print(`  ${posted.page}`);
-  print(`Waiting for the approval. The request runs out at ${posted.expires.replace(/[^0-9TZ:.-]/g, "?")}. Ctrl-C stops the waiting.`);
+
+  let approvedHere = false;
+  if (helper !== null) {
+    // The helper fetches the cards from the server itself and answers with the list that it computed.
+    const answer = await askHelper(helper, posted.id, ({ list, finger, seconds }) => {
+      if (!sameList(list, linesOf(asked))) {
+        throw new LawsError(
+          "the fingerprint helper got a different list from the signing server than this program sent. " +
+            "Do not touch the reader. Nothing was stored.",
+        );
+      }
+      print(`Or approve it here: put your ${finger.replaceAll("-", " ")} on the fingerprint reader now. You have ${seconds} seconds.`);
+    });
+    approvedHere = answer.approved;
+    if (!answer.approved) print(`the fingerprint helper did not approve: ${answer.why}. You can still sign on the phone.`);
+  }
+  if (!approvedHere) {
+    print(`Waiting for the phone. The request runs out at ${posted.expires.replace(/[^0-9TZ:.-]/g, "?")}. Ctrl-C stops the waiting.`);
+  }
   const answer = await waitForApproval(base, posted, print);
   const signature = answer.signature === null ? null : Buffer.from(answer.signature, "utf8");
   return { manifest: Buffer.from(answer.manifest, "utf8"), signature, passkey: answer.passkey };

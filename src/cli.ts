@@ -9,7 +9,7 @@ import { gate } from "./gate.ts";
 import { retireCommand, signCommand } from "./sign.ts";
 import { readLawbook, resolveSigners, verifyRepo } from "./verify.ts";
 
-const USAGE = `usage: laws [--repo <path>] [--signers <file>] [--server <address> [--phone] | --signer "<command>"] <command>
+const USAGE = `usage: laws [--repo <path>] [--signers <file>] [--server <address> [--phone | --laptop <socket>] | --signer "<command>"] <command>
 
   status           one line per card: id, grade, state, title
   show <id>        print a card, and its figure if a rendered .txt exists
@@ -25,9 +25,11 @@ const USAGE = `usage: laws [--repo <path>] [--signers <file>] [--server <address
   --signers  the allowed-signers file, outside the repository
              (default: $LAWS_SIGNERS, then /etc/laws/allowed_signers)
   --server   the address of the signing server for "sign" and "retire": the cards wait there until
-             you approve them (default: $LAWS_SIGNER, written as server:<address>)
-  --phone    with --server: wait for the phone
-  --laptop   the socket of the laptop signer, instead of the server: it asks for your finger
+             you approve them, on the phone or with your finger on the laptop
+             (default: $LAWS_SIGNER, written as server:<address>)
+  --phone    with --server: wait for the phone, and do not offer the finger on the laptop
+  --laptop   with --server: the socket of the laptop's fingerprint helper
+             (default: /run/laws-signer/socket, if it is there)
   --signer   a signer command, instead of the server: it asks for a typed word (default: $LAWS_SIGNER)`;
 
 type Arguments = {
