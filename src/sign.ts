@@ -93,13 +93,13 @@ function readBack(file: string): Buffer {
   }
 }
 
-// The name is the time in UTC, for example 20261118T091500Z.
+// The name is the time in UTC to the millisecond, for example 20261118T091500.123Z.
 function store(repo: string, manifest: Uint8Array, signature: Uint8Array): string {
   const folder = join(repo, "laws", "approvals");
-  const name = new Date().toISOString().replace(/[-:]/g, "").replace(/\.\d+Z$/, "Z");
+  const name = new Date().toISOString().replace(/[-:]/g, "");
   const manifestFile = join(folder, `${name}.manifest`);
   if (existsSync(manifestFile)) {
-    throw new LawsError(`laws/approvals/${name}.manifest already exists. Wait a second and run laws sign again.`);
+    throw new LawsError(`laws/approvals/${name}.manifest already exists. Run laws sign again.`);
   }
   mkdirSync(folder, { recursive: true });
   writeFileSync(manifestFile, manifest);
