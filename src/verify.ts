@@ -29,7 +29,12 @@ export function resolveSigners(repo: string, flag: string | null): string {
         "Pass --signers <file> or set LAWS_SIGNERS to a file outside it.",
     );
   };
-  const repoReal = realpathSync(repo);
+  let repoReal: string;
+  try {
+    repoReal = realpathSync(repo);
+  } catch {
+    throw new LawsError(`the repository ${repo} does not exist.`);
+  }
   if (isInside(resolve(repo), path) || isInside(repoReal, path)) refuse();
 
   let real: string;
