@@ -11,8 +11,9 @@
       inherit (nixpkgs) lib;
       forEachSystem = perSystem: lib.genAttrs [ "x86_64-linux" "aarch64-linux" ] (system: perSystem nixpkgs.legacyPackages.${system});
 
-      # Both commands are TypeScript files that Node 24 runs as they are. The wrappers pin Node and
-      # put OpenSSH's ssh-keygen first on the PATH.
+      # Both commands are TypeScript files that Node 24 runs as they are. The wrappers pin Node, and the
+      # installed files call ssh-keygen by its full path in the store, so neither command depends on PATH
+      # for it. laws runs checks with "sh"; bash is put last on its PATH in case there is none.
       lawsPackage =
         pkgs:
         pkgs.stdenvNoCC.mkDerivation {
@@ -29,23 +30,19 @@
           nativeBuildInputs = [ pkgs.makeWrapper ];
           dontConfigure = true;
           dontBuild = true;
-          installPhase =
-            let
-              wrap = name: file: ''
-                makeWrapper ${pkgs.nodejs_24}/bin/node $out/bin/${name} \
-                  --add-flags $out/lib/laws/${file} \
-                  --prefix PATH : ${lib.makeBinPath [ pkgs.openssh ]} \
-                  --suffix PATH : ${lib.makeBinPath [ pkgs.bash ]}
-              '';
-            in
-            ''
-              runHook preInstall
-              mkdir -p $out/lib/laws $out/bin
-              cp -r src signer package.json $out/lib/laws/
-              ${wrap "laws" "src/cli.ts"}
-              ${wrap "laws-signer" "signer/signer.ts"}
-              runHook postInstall
-            '';
+          installPhase = ''
+            runHook preInstall
+            mkdir -p $out/lib/laws $out/bin
+            cp -r src signer package.json $out/lib/laws/
+            substituteInPlace $out/lib/laws/signer/signer.ts $out/lib/laws/src/approvals.ts \
+              --replace-fail 'const SSH_KEYGEN = "ssh-keygen";' 'const SSH_KEYGEN = "${pkgs.openssh}/bin/ssh-keygen";'
+            makeWrapper ${pkgs.nodejs_24}/bin/node $out/bin/laws \
+              --add-flags $out/lib/laws/src/cli.ts \
+              --suffix PATH : ${lib.makeBinPath [ pkgs.bash ]}
+            makeWrapper ${pkgs.nodejs_24}/bin/node $out/bin/laws-signer \
+              --add-flags $out/lib/laws/signer/signer.ts
+            runHook postInstall
+          '';
           meta = {
             description = "Law cards with a check, a bite and a signed approval";
             mainProgram = "laws";
@@ -86,10 +83,16 @@
               touch $out
             '';
 
-        # The installed commands start and find their files.
+        # The installed commands start and find their files. The signer is run with an empty
+        # environment: it must find ssh-keygen without PATH, and with no terminal it must refuse.
         package = pkgs.runCommand "laws-package" { } ''
           ${lawsPackage pkgs}/bin/laws show T-01 --repo ${self} | grep "^id: T-01$" > /dev/null
-          (${lawsPackage pkgs}/bin/laws-signer 2>&1 || true) | grep "usage: laws-signer" > /dev/null
+          ${pkgs.openssh}/bin/ssh-keygen -q -t ed25519 -N "" -C throwaway -f key
+          mkdir out
+          (env -i ${lawsPackage pkgs}/bin/laws-signer --repo ${self} --key key --log log --out out T-01 2>&1 || true) \
+            | grep "there is no terminal" > /dev/null
+          grep "refused:no-terminal T-01=" log > /dev/null
+          test ! -e out/manifest.sig
           touch $out
         '';
       });
