@@ -43,7 +43,7 @@ export async function runCommand(command: string, folder: string, timeoutSeconds
     });
     clearTimeout(timer);
 
-    const leftRunning = !timedOut && processesWith(marker).length > 0;
+    const leftRunning = !timedOut && (await anyProcessWith(marker));
     const gone = await stopEverything(group, marker);
     return { exitCode: timedOut ? null : exitCode, timedOut, leftRunning, notStopped: !gone, output: read(outputFile) };
   } finally {
@@ -90,15 +90,37 @@ function processesWith(marker: string): number[] {
   return found;
 }
 
+// One look is not enough to say that nothing is left. A process that was just started shows an empty
+// environment for a moment, while Linux swaps its old program for the new one, and one look in that
+// moment misses it. So "nothing" counts only after this many looks in a row, 20 ms apart, found nothing.
+const CLEAN_LOOKS = 4;
+const LOOK_PAUSE_MS = 20;
+
+function pause(): Promise<void> {
+  return new Promise<void>((wake) => setTimeout(() => wake(), LOOK_PAUSE_MS));
+}
+
+// True as soon as one look finds a process with the marker. False only after CLEAN_LOOKS empty looks.
+async function anyProcessWith(marker: string): Promise<boolean> {
+  for (let look = 0; look < CLEAN_LOOKS; look++) {
+    if (look > 0) await pause();
+    if (processesWith(marker).length > 0) return true;
+  }
+  return false;
+}
+
 // Kills the group and every process with the marker until none is left. Killed processes take a moment
-// to go, so this looks again for up to three seconds. Signal 0 only asks whether the group has a process.
+// to go, so this looks again for up to three seconds, and it wants CLEAN_LOOKS empty looks in a row before
+// it says that all are gone. Signal 0 only asks whether the group has a process.
 async function stopEverything(group: number | undefined, marker: string): Promise<boolean> {
+  let cleanLooks = 0;
   for (let attempt = 0; attempt < 150; attempt++) {
     killGroup(group);
     const marked = processesWith(marker);
     for (const pid of marked) kill(pid);
-    if (marked.length === 0 && groupIsEmpty(group)) return true;
-    await new Promise<void>((wake) => setTimeout(() => wake(), 20));
+    cleanLooks = marked.length === 0 && groupIsEmpty(group) ? cleanLooks + 1 : 0;
+    if (cleanLooks >= CLEAN_LOOKS) return true;
+    await pause();
   }
   return false;
 }
