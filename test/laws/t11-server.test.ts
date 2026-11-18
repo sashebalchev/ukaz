@@ -635,8 +635,12 @@ if (import.meta.main) {
       await visit(server, world.phone, byPhone, IDS);
       await laptopApproves(server, world, byLaptop, IDS);
       assert.deepEqual(readdirSync(state).sort(), [byPhone, byLaptop, "record.log"].sort());
-      assert.deepEqual(readdirSync(join(state, byPhone)).sort(), ["created", "manifest", "passkey.json", "request.json"]);
-      assert.deepEqual(readdirSync(join(state, byLaptop)).sort(), ["created", "manifest", "manifest.sig", "request.json"]);
+      for (const name of readdirSync(state)) assert.doesNotMatch(name, /key/i);
+      // A waiting request holds the cards. A closed one holds the list and its signature.
+      const waiting = await post(server, requestFor(repo, IDS));
+      assert.deepEqual(readdirSync(join(state, waiting)).sort(), ["created", "request.json"]);
+      assert.deepEqual(readdirSync(join(state, byPhone)).sort(), ["created", "manifest", "passkey.json"]);
+      assert.deepEqual(readdirSync(join(state, byLaptop)).sort(), ["created", "manifest", "manifest.sig"]);
     });
   });
 
@@ -795,6 +799,16 @@ if (import.meta.main) {
       assert.ok(!existsSync(join(state, older ?? "")), "a request that ran out must be removed");
       assert.equal(((await call(server, "api/requests")).body["requests"] as unknown[]).length, 19);
       assert.equal((await call(server, "api/requests", request)).status, 200, "a place is free again");
+
+      // Only waiting requests count. One that is signed or rejected makes room at once, stays
+      // fetchable, and holds the cards no more.
+      assert.equal((await call(server, "api/requests", request)).status, 429);
+      assert.equal((await call(server, `api/requests/${ids[3]}/reject`, {})).status, 200);
+      assert.equal((await visit(server, world.phone, ids[4] ?? "", ["A-01"])).posted?.status, 200);
+      for (let n = 0; n < 2; n++) assert.equal((await call(server, "api/requests", request)).status, 200, "a closed request must make room");
+      assert.equal((await call(server, "api/requests", request)).status, 429);
+      assert.equal((await call(server, `api/requests/${ids[4]}/result`)).body["state"], "signed");
+      assert.deepEqual(((await call(server, `api/requests/${ids[4]}`)).body as unknown as Shown).cards, []);
 
       // Ids are 32 hex digits and nothing else. No address leads out of the state folder.
       writeFileSync(join(world.folder, "outside"), "{}");

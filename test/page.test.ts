@@ -21,7 +21,7 @@ import {
   toBase64url,
   toHex,
 } from "../server/page/pure.js";
-import { HEADERS, readSettings, startServer } from "../server/server.ts";
+import { HEADERS, MAX_KEPT, readSettings, startServer } from "../server/server.ts";
 import { keyFingerprint, parsePasskeyLine, readPasskeyFields } from "../src/passkey.ts";
 import { newPhone, phoneSigns } from "./support.ts";
 
@@ -171,6 +171,32 @@ test("the server sends the page with a strict policy and without cookies", async
     const info = (await (await fetch(`http://127.0.0.1:${server.port}/api/info`)).json()) as Record<string, unknown>;
     assert.deepEqual(info, { rpId: "laws.example.test", origin: "https://laws.example.test", checks: false, hours: 24 });
     assert.equal((await fetch(`http://127.0.0.1:${server.port}/pure.d.ts`)).status, 404);
+  } finally {
+    await server.stop();
+    rmSync(state, { recursive: true, force: true });
+  }
+});
+
+test("the server keeps at most 200 requests: when there are more, the oldest closed ones go", async () => {
+  const state = mkdtempSync(join(tmpdir(), "laws-kept-"));
+  const server = await startServer({ port: 0, state, origin: "https://laws.example.test", rpId: "laws.example.test", signers: null }, () => {});
+  try {
+    const card = Buffer.from("---\nid: A-01\ngrade: prose\n---\n# A-01 A law\n").toString("base64");
+    const send = async (path: string, body: string): Promise<Record<string, unknown>> => {
+      const response = await fetch(`http://127.0.0.1:${server.port}/api/${path}`, { method: "POST", headers: { "Content-Type": "application/json" }, body });
+      assert.equal(response.status, 200, path);
+      return (await response.json()) as Record<string, unknown>;
+    };
+    const ids: string[] = [];
+    for (let n = 0; n < MAX_KEPT + 5; n++) {
+      const { id } = await send("requests", JSON.stringify({ cards: [{ id: "A-01", retire: false, card, files: [] }] }));
+      ids.push(String(id));
+      await send(`requests/${String(id)}/reject`, "{}");
+    }
+    const kept = readdirSync(state).filter((name) => name !== "record.log");
+    assert.equal(kept.length, MAX_KEPT);
+    assert.ok(kept.includes(ids.at(-1) ?? ""), "the newest request must be kept");
+    assert.ok(!kept.includes(ids[0] ?? ""), "the oldest closed request must be gone");
   } finally {
     await server.stop();
     rmSync(state, { recursive: true, force: true });

@@ -43,7 +43,8 @@ import type { PasskeySigner } from "../src/passkey.ts";
 import type { Line, ReadCard } from "../src/request.ts";
 
 export const EXPIRY_HOURS = 24; // long enough to post in the evening and sign in the morning
-export const MAX_WAITING = 20;
+export const MAX_WAITING = 20; // requests that wait for an approval at one time
+export const MAX_KEPT = 200; // requests that are kept in all, the closed ones included
 const MAX_SMALL_BODY = 64 * 1024;
 const MAX_SIGNATURE_CHARS = 8 * 1024;
 const SSH_SIGNATURE = /^-----BEGIN SSH SIGNATURE-----\n([A-Za-z0-9+/=]+\n)+-----END SSH SIGNATURE-----\n$/;
@@ -130,7 +131,7 @@ export async function startServer(settings: Settings, print: (line: string) => v
   const lifetime = EXPIRY_HOURS * 3600 * 1000;
 
   // ---- What is stored: one folder per request, named by its id. ----
-  //   request.json   the request as the laptop posted it
+  //   request.json   the request as the laptop posted it, for as long as it waits
   //   created        when it arrived
   //   manifest       the list that the phone is asked to sign, or the list that the laptop signed
   //   passkey.json   the phone's answer, if the phone approved
@@ -193,6 +194,9 @@ export async function startServer(settings: Settings, print: (line: string) => v
     }
   };
 
+  // A request that is approved or rejected needs its cards no more. They are the large part of it.
+  const close = (id: string): void => rmSync(join(state, id, "request.json"), { force: true });
+
   const waitingOnly = (id: string): Stored => {
     const found = stored(id);
     if (found.state === "signed") throw new Refusal(409, "this request is signed already");
@@ -212,7 +216,14 @@ export async function startServer(settings: Settings, print: (line: string) => v
       if (!(error instanceof RequestError)) throw error;
       throw new Refusal(400, error.message);
     }
-    if (prune().length >= MAX_WAITING) throw new Refusal(429, `${MAX_WAITING} requests are waiting already. Sign or reject one, or wait until one runs out`);
+    // Closed requests are small and are kept until they run out, so that the laptop can still fetch
+    // them. If there are too many of them, the oldest go first.
+    const kept = prune().map((id) => ({ id, ...lookup(id) }));
+    if (kept.filter((request) => request.state === "waiting").length >= MAX_WAITING) {
+      throw new Refusal(429, `${MAX_WAITING} requests are waiting already. Sign or reject one, or wait until one runs out`);
+    }
+    const closed = kept.filter((request) => request.state !== "waiting").sort((a, b) => a.created - b.created);
+    for (const old of closed.slice(0, Math.max(0, kept.length + 1 - MAX_KEPT))) rmSync(join(state, old.id), { recursive: true, force: true });
     const id = randomBytes(16).toString("hex");
     const created = new Date();
     mkdirSync(join(state, id), { mode: 0o700 });
@@ -239,7 +250,8 @@ export async function startServer(settings: Settings, print: (line: string) => v
   // What the page shows. The text of a card and its hash come from the same bytes, read just now.
   const show = (id: string): object => {
     const { state: requestState, by, created, manifest } = stored(id);
-    const cards = cardsOf(id).map((card) => {
+    // A closed request holds no cards any more: only what was signed is shown.
+    const cards = (requestState === "waiting" ? cardsOf(id) : []).map((card) => {
       const picture = card.files.find((file) => file.path === renderedFigure(card.card));
       return {
         id: card.id,
@@ -308,6 +320,7 @@ export async function startServer(settings: Settings, print: (line: string) => v
     }
     record("phone", id, checked === "accepted", parseManifest(manifest));
     writeFileSync(join(state, id, "passkey.json"), text, { mode: 0o600 });
+    close(id);
     return { stored: true, checked };
   };
 
@@ -354,6 +367,7 @@ export async function startServer(settings: Settings, print: (line: string) => v
     rmSync(join(state, id, "passkey.json"), { force: true });
     writeFileSync(join(state, id, "manifest"), manifest, { mode: 0o600 });
     writeFileSync(join(state, id, "manifest.sig"), signed, { mode: 0o600 });
+    close(id);
     return { stored: true, checked };
   };
 
@@ -361,6 +375,7 @@ export async function startServer(settings: Settings, print: (line: string) => v
     waitingOnly(id);
     rmSync(join(state, id, "manifest"), { force: true });
     writeFileSync(join(state, id, "rejected"), "", { mode: 0o600 });
+    close(id);
     return { rejected: true };
   };
 
