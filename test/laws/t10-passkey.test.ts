@@ -612,7 +612,7 @@ if (import.meta.main) {
       writeFileSync(signers, `owner ${readFileSync(`${world.laptopKey}.pub`, "utf8")}${line}\n`);
       const [exitCode, printed] = laws("verify", repo, signers);
       assert.equal(exitCode, 1, `verify passed with this line in the signers file: ${line}`);
-      assert.match(printed, /line 2 of the signers file .* is not a good passkey line/, line);
+      assert.match(printed, /the signers file .* cannot be used: line 2 is not a good passkey line/, line);
     }
   });
 }

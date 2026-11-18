@@ -1,0 +1,347 @@
+/* The page for the phone. Dark, one column, large buttons. Nothing on it moves or fades. */
+
+:root {
+  color-scheme: dark;
+  --ground: #0f1115;
+  --surface: #171a20;
+  --inset: #0b0d10;
+  --line: #2b303a;
+  --text: #e9e6e0;
+  --quiet: #a09c94;
+  --accept: #58c491;
+  --reject: #ee7d72;
+  --warn: #e5b85c;
+  --focus: #9cc2ff;
+  --mono: ui-monospace, "SF Mono", "Roboto Mono", Menlo, Consolas, monospace;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html {
+  -webkit-text-size-adjust: 100%;
+  text-size-adjust: 100%;
+}
+
+body {
+  margin: 0;
+  background: var(--ground);
+  color: var(--text);
+  font: 17px/1.5 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+}
+
+header,
+main {
+  max-width: 46rem;
+  margin: 0 auto;
+  padding: 0 16px;
+}
+
+header {
+  padding-top: 20px;
+  padding-bottom: 4px;
+}
+
+h1 {
+  margin: 0;
+  font-size: 1.05rem;
+  font-weight: 650;
+  letter-spacing: 0.02em;
+}
+
+h1 a {
+  color: inherit;
+  text-decoration: none;
+}
+
+h2 {
+  margin: 6px 0 4px;
+  font-size: 1.2rem;
+  line-height: 1.3;
+  font-weight: 650;
+  overflow-wrap: anywhere;
+}
+
+h3 {
+  margin: 18px 0 6px;
+  font-size: 0.8rem;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--quiet);
+}
+
+p {
+  margin: 10px 0;
+}
+
+a {
+  color: var(--focus);
+}
+
+.quiet {
+  color: var(--quiet);
+  font-size: 0.92rem;
+}
+
+.problem {
+  color: var(--reject);
+}
+
+.warn {
+  color: var(--warn);
+}
+
+.good {
+  color: var(--accept);
+}
+
+code,
+pre,
+.mono {
+  font-family: var(--mono);
+}
+
+/* The text of a card: every line in full, wrapped to the width of the phone. */
+pre {
+  margin: 0;
+  padding: 12px;
+  background: var(--inset);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  font-size: 0.8rem;
+  line-height: 1.55;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+/* A figure is drawn with characters. Wrapping would break it, so it scrolls sideways. */
+pre.figure {
+  white-space: pre;
+  overflow-wrap: normal;
+  overflow-x: auto;
+}
+
+.card,
+.block {
+  margin: 16px 0;
+  padding: 16px;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 12px;
+}
+
+.card.accepted {
+  border-color: var(--accept);
+}
+
+.card.rejected {
+  border-color: var(--reject);
+}
+
+.kind {
+  display: inline-block;
+  padding: 1px 8px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  font-size: 0.75rem;
+  font-weight: 650;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--quiet);
+}
+
+.kind.retire {
+  color: var(--warn);
+  border-color: var(--warn);
+}
+
+.id {
+  margin-left: 6px;
+  font-family: var(--mono);
+  font-size: 0.95rem;
+}
+
+.hash {
+  margin: 0 0 12px;
+  font-family: var(--mono);
+  font-size: 0.72rem;
+  line-height: 1.4;
+  color: var(--quiet);
+  overflow-wrap: anywhere;
+}
+
+ul.files {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  font-size: 0.85rem;
+}
+
+ul.files li {
+  display: flex;
+  gap: 12px;
+  justify-content: space-between;
+  padding: 6px 0;
+  border-top: 1px solid var(--line);
+}
+
+ul.files .path {
+  font-family: var(--mono);
+  font-size: 0.78rem;
+  overflow-wrap: anywhere;
+}
+
+ul.files .size {
+  flex: none;
+  color: var(--quiet);
+}
+
+button,
+input,
+a.button {
+  font: inherit;
+  color: inherit;
+}
+
+button,
+a.button {
+  display: block;
+  width: 100%;
+  min-height: 56px;
+  padding: 12px 16px;
+  background: transparent;
+  border: 2px solid var(--line);
+  border-radius: 10px;
+  font-size: 1.05rem;
+  font-weight: 600;
+  text-align: center;
+  text-decoration: none;
+  cursor: pointer;
+  touch-action: manipulation;
+  -webkit-tap-highlight-color: transparent;
+}
+
+button:focus-visible,
+a:focus-visible,
+input:focus-visible {
+  outline: 3px solid var(--focus);
+  outline-offset: 2px;
+}
+
+button:disabled {
+  color: var(--quiet);
+  border-style: dashed;
+  cursor: default;
+}
+
+.choice {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+  margin-top: 16px;
+}
+
+.choice .accept {
+  border-color: var(--accept);
+  color: var(--accept);
+}
+
+.choice .reject {
+  border-color: var(--reject);
+  color: var(--reject);
+}
+
+.choice .accept[aria-pressed="true"] {
+  background: var(--accept);
+  color: var(--ground);
+}
+
+.choice .reject[aria-pressed="true"] {
+  background: var(--reject);
+  color: var(--ground);
+}
+
+/* The one button that signs. It stays at the bottom of the screen. */
+#bar {
+  position: sticky;
+  bottom: 0;
+  margin-top: 24px;
+  padding: 12px 16px calc(12px + env(safe-area-inset-bottom));
+  background: var(--inset);
+  border-top: 1px solid var(--line);
+}
+
+#bar > div {
+  max-width: 46rem;
+  margin: 0 auto;
+}
+
+#count {
+  margin: 0 0 8px;
+  font-size: 0.9rem;
+  color: var(--quiet);
+}
+
+button.primary {
+  min-height: 60px;
+  background: var(--text);
+  border-color: var(--text);
+  color: var(--ground);
+  font-size: 1.15rem;
+}
+
+button.primary:disabled {
+  background: transparent;
+  border-color: var(--line);
+  color: var(--quiet);
+}
+
+button.primary.reject {
+  background: transparent;
+  border-color: var(--reject);
+  color: var(--reject);
+}
+
+a.request {
+  display: block;
+  margin: 16px 0;
+  padding: 16px;
+  min-height: 56px;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  color: inherit;
+  text-decoration: none;
+}
+
+a.request strong {
+  display: block;
+  font-size: 1.1rem;
+}
+
+label {
+  display: block;
+  margin: 16px 0 6px;
+  font-size: 0.92rem;
+  color: var(--quiet);
+}
+
+input {
+  width: 100%;
+  min-height: 56px;
+  padding: 12px;
+  background: var(--inset);
+  border: 2px solid var(--line);
+  border-radius: 10px;
+  font-family: var(--mono);
+}
+
+.block button {
+  margin-top: 12px;
+}
+
+[hidden] {
+  display: none !important;
+}

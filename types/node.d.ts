@@ -25,6 +25,39 @@ declare class TextDecoder {
   decode(bytes: Uint8Array): string;
 }
 
+// The address of a web page or of a request, taken apart.
+declare class URL {
+  constructor(address: string, base?: string | URL);
+  readonly origin: string;
+  readonly protocol: string;
+  readonly host: string;
+  readonly hostname: string;
+  readonly pathname: string;
+  readonly search: string;
+  readonly searchParams: { get(name: string): string | null };
+  href: string;
+}
+
+// fetch: an HTTP request. Node has it built in.
+interface Response {
+  readonly ok: boolean;
+  readonly status: number;
+  readonly headers: { get(name: string): string | null };
+  text(): Promise<string>;
+  json(): Promise<unknown>;
+}
+declare function fetch(
+  address: string | URL,
+  options?: { method?: string; headers?: Record<string, string>; body?: string; signal?: AbortSignal },
+): Promise<Response>;
+interface AbortSignal {
+  readonly aborted: boolean;
+}
+declare const AbortSignal: {
+  // A signal that stops the request after so many milliseconds.
+  timeout(milliseconds: number): AbortSignal;
+};
+
 declare const console: {
   log(...values: unknown[]): void;
   error(...values: unknown[]): void;
@@ -198,6 +231,56 @@ declare module "node:net" {
   }
   export function createServer(listener: (socket: Socket) => void): Server;
   export function createConnection(path: string): Socket;
+}
+
+declare module "node:http" {
+  // A request that arrived at a server, or the answer to a request that a client sent.
+  interface IncomingMessage {
+    readonly method?: string;
+    readonly url?: string;
+    readonly statusCode?: number;
+    readonly headers: Record<string, string | string[] | undefined>;
+    on(event: "data", listener: (chunk: Buffer) => void): this;
+    on(event: "end", listener: () => void): this;
+    on(event: "error", listener: (error: Error) => void): this;
+    destroy(): this;
+  }
+  interface ServerResponse {
+    writeHead(status: number, headers?: Record<string, string>): this;
+    end(body?: string | Uint8Array): this;
+  }
+  interface Server {
+    requestTimeout: number;
+    headersTimeout: number;
+    // Port 0: any free port. address() tells which one it became.
+    listen(port: number, host: string, callback?: () => void): this;
+    address(): { port: number } | string | null;
+    close(callback?: (error?: Error) => void): this;
+    closeAllConnections(): void;
+    on(event: "error", listener: (error: Error) => void): this;
+  }
+  export function createServer(listener: (request: IncomingMessage, response: ServerResponse) => void): Server;
+
+  // A request that this program sends. It follows no redirect.
+  interface ClientRequest {
+    on(event: "error", listener: (error: Error) => void): this;
+    end(body?: string): this;
+    destroy(error?: Error): this;
+  }
+  export function request(
+    address: URL,
+    options: { method?: string; headers?: Record<string, string> },
+    callback: (response: IncomingMessage) => void,
+  ): ClientRequest;
+}
+
+declare module "node:https" {
+  import type { ClientRequest, IncomingMessage } from "node:http";
+  export function request(
+    address: URL,
+    options: { method?: string; headers?: Record<string, string> },
+    callback: (response: IncomingMessage) => void,
+  ): ClientRequest;
 }
 
 declare module "node:test" {

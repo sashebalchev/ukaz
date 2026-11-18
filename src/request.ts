@@ -1,4 +1,5 @@
 import { CardError, hashedPaths, ID_PATTERN, parseCard } from "./card.ts";
+import type { Card } from "./card.ts";
 import { hashCard } from "./hash.ts";
 import type { FrozenFile } from "./hash.ts";
 
@@ -24,7 +25,7 @@ export type RequestCard = { id: string; retire: boolean; card: Uint8Array; files
 export type Line = { id: string; hash: string | null; title: string };
 
 // A card of a request after the receiver has read it and computed its hash.
-export type ReadCard = Line & { cardBytes: Uint8Array; files: FrozenFile[] };
+export type ReadCard = Line & { card: Card; cardBytes: Uint8Array; files: FrozenFile[] };
 
 export class RequestError extends Error {}
 
@@ -81,7 +82,7 @@ function readCard(value: unknown, budget: { left: number }): ReadCard {
     return { path, bytes: decode(bytes, `${id}: ${path}`, budget) };
   });
 
-  let card;
+  let card: Card;
   try {
     card = parseCard(cardBytes, id);
   } catch (error) {
@@ -90,7 +91,7 @@ function readCard(value: unknown, budget: { left: number }): ReadCard {
   }
   if (retire) {
     if (files.length > 0) throw new RequestError(`${id}: a card to retire comes without other files`);
-    return { id, hash: null, title: card.title, cardBytes, files };
+    return { id, hash: null, title: card.title, card, cardBytes, files };
   }
 
   // Exactly the files that the card names: every one that must be there, and no other.
@@ -105,7 +106,7 @@ function readCard(value: unknown, budget: { left: number }): ReadCard {
       throw new RequestError(`${id}: ${path} was sent, and the card does not name it`);
     }
   }
-  return { id, hash: hashCard(cardBytes, files), title: card.title, cardBytes, files };
+  return { id, hash: hashCard(cardBytes, files), title: card.title, card, cardBytes, files };
 }
 
 // The value must be an object with exactly these keys.

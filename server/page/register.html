@@ -1,0 +1,35 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="color-scheme" content="dark" />
+    <meta name="robots" content="noindex" />
+    <title>laws: make a passkey</title>
+    <link rel="stylesheet" href="style.css" />
+    <script type="module" src="register.js"></script>
+  </head>
+  <body>
+    <header>
+      <h1><a href="./">laws</a></h1>
+    </header>
+    <main id="main">
+      <h2>Make a passkey for approving laws</h2>
+      <p id="site" class="quiet">Loading…</p>
+      <p>
+        Keep this passkey in the phone itself or on a hardware key. If its store is also open on the laptop, a program
+        there may be able to use it.
+      </p>
+      <p class="quiet">
+        Nothing is sent to the server. The passkey counts only after you put the line below into the signers file on
+        the laptop yourself.
+      </p>
+      <label for="name">Your name in the signers file</label>
+      <input id="name" value="alex" autocomplete="off" autocapitalize="none" spellcheck="false" />
+      <p><button id="create" class="primary" type="button" disabled>Make the passkey</button></p>
+      <p id="problem" class="problem"></p>
+      <div id="result"></div>
+      <noscript><p class="problem">This page needs JavaScript.</p></noscript>
+    </main>
+  </body>
+</html>

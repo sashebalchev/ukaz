@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { ID_PATTERN } from "./card.ts";
 import { LawsError } from "./cards.ts";
-import { isPasskeyLine, MAX_PASSKEY_FILE_BYTES, parsePasskeyLine, passkeyProblem } from "./passkey.ts";
+import { MAX_PASSKEY_FILE_BYTES, passkeyProblem, splitSigners } from "./passkey.ts";
 import type { PasskeySigner } from "./passkey.ts";
 
 // A signed batch is laws/approvals/<name>.manifest plus the proof that you approved it. The proof is one of:
@@ -69,23 +69,18 @@ export function parseManifest(text: string): Manifest {
 export type Signers = { file: string; sshFile: string; passkeys: PasskeySigner[]; close: () => void };
 
 export function openSigners(signersFile: string): Signers {
-  const lines = readFileSync(signersFile, "utf8").split("\n");
-  const passkeys: PasskeySigner[] = [];
-  const forSsh = lines.map((line, index) => {
-    if (!isPasskeyLine(line)) return line;
-    try {
-      passkeys.push(parsePasskeyLine(line));
-    } catch (error) {
-      const why = error instanceof Error ? error.message : String(error);
-      throw new LawsError(`line ${index + 1} of the signers file ${signersFile} is not a good passkey line: ${why}.`);
-    }
-    return ""; // an empty line, so that the line numbers stay the same
-  });
+  let passkeys: PasskeySigner[];
+  let withoutPasskeys: string;
+  try {
+    ({ passkeys, withoutPasskeys } = splitSigners(readFileSync(signersFile, "utf8")));
+  } catch (error) {
+    throw new LawsError(`the signers file ${signersFile} cannot be used: ${error instanceof Error ? error.message : String(error)}.`);
+  }
   if (passkeys.length === 0) return { file: signersFile, sshFile: signersFile, passkeys, close: () => {} };
 
   const folder = mkdtempSync(join(tmpdir(), "laws-signers-"));
   const sshFile = join(folder, "allowed_signers");
-  writeFileSync(sshFile, forSsh.join("\n"), { mode: 0o600 });
+  writeFileSync(sshFile, withoutPasskeys, { mode: 0o600 });
   return { file: signersFile, sshFile, passkeys, close: () => rmSync(folder, { recursive: true, force: true }) };
 }
 

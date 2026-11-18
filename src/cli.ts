@@ -9,7 +9,7 @@ import { gate } from "./gate.ts";
 import { retireCommand, signCommand } from "./sign.ts";
 import { readLawbook, resolveSigners, verifyRepo } from "./verify.ts";
 
-const USAGE = `usage: laws [--repo <path>] [--signers <file>] [--signer "<command>" | --laptop <socket>] <command>
+const USAGE = `usage: laws [--repo <path>] [--signers <file>] [--server <address> [--phone] | --signer "<command>"] <command>
 
   status           one line per card: id, grade, state, title
   show <id>        print a card, and its figure if a rendered .txt exists
@@ -24,14 +24,19 @@ const USAGE = `usage: laws [--repo <path>] [--signers <file>] [--signer "<comman
   --repo     the repository to work on (default: the current folder)
   --signers  the allowed-signers file, outside the repository
              (default: $LAWS_SIGNERS, then /etc/laws/allowed_signers)
-  --signer   the signer command for "sign" and "retire": it asks for a typed word (default: $LAWS_SIGNER)
-  --laptop   the socket of the laptop signer, instead of a signer command: it asks for your finger`;
+  --server   the address of the signing server for "sign" and "retire": the cards wait there until
+             you approve them (default: $LAWS_SIGNER, written as server:<address>)
+  --phone    with --server: wait for the phone
+  --laptop   the socket of the laptop signer, instead of the server: it asks for your finger
+  --signer   a signer command, instead of the server: it asks for a typed word (default: $LAWS_SIGNER)`;
 
 type Arguments = {
   repo: string;
   signers: string | null;
   signer: string | null;
   laptop: string | null;
+  server: string | null;
+  phone: boolean;
   command: string;
   rest: string[];
 };
@@ -41,7 +46,9 @@ function readArguments(words: string[]): Arguments {
   const plain: string[] = [];
   for (let i = 0; i < words.length; i++) {
     const word = words[i] ?? "";
-    if (["--repo", "--signers", "--signer", "--laptop"].includes(word)) {
+    if (word === "--phone") {
+      options.set(word, "yes");
+    } else if (["--repo", "--signers", "--signer", "--laptop", "--server"].includes(word)) {
       const value = words[i + 1];
       if (value === undefined || options.has(word)) throw new LawsError(`${word} needs one value, once.\n\n${USAGE}`);
       options.set(word, value);
@@ -59,13 +66,16 @@ function readArguments(words: string[]): Arguments {
     signers: options.get("--signers") ?? null,
     signer: options.get("--signer") ?? null,
     laptop: options.get("--laptop") ?? null,
+    server: options.get("--server") ?? null,
+    phone: options.has("--phone"),
     command,
     rest,
   };
 }
 
 async function main(words: string[]): Promise<number> {
-  const { repo, signers, signer, laptop, command, rest } = readArguments(words);
+  const { repo, signers, signer, laptop, server, phone, command, rest } = readArguments(words);
+  const how = { signerCommand: signer, laptop, server, phone, signersFlag: signers };
   const print = (line: string): void => console.log(line);
   if (!["show", "sign", "retire"].includes(command) && rest.length > 0) {
     throw new LawsError(`"laws ${command}" takes no further words, got: ${rest.join(" ")}`);
@@ -92,9 +102,9 @@ async function main(words: string[]): Promise<number> {
       return verdict.ok ? 0 : 1;
     }
     case "sign":
-      return signCommand({ repo, ids: rest, signerCommand: signer, laptop, signersFlag: signers }, print);
+      return signCommand({ repo, ids: rest, ...how }, print);
     case "retire":
-      return retireCommand({ repo, ids: rest, signerCommand: signer, laptop, signersFlag: signers }, print);
+      return retireCommand({ repo, ids: rest, ...how }, print);
     default:
       throw new LawsError(`unknown command "${command}".\n\n${USAGE}`);
   }

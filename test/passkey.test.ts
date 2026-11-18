@@ -118,7 +118,7 @@ test(
       assert.fail("a broken passkey line was accepted");
     } catch (error) {
       if (!(error instanceof LawsError)) throw error; // it must be an error that the command prints as a plain message
-      assert.match(error.message, /line 2 of the signers file .* is not a good passkey line/);
+      assert.match(error.message, /the signers file .* cannot be used: line 2 is not a good passkey line/);
     }
   }),
 );

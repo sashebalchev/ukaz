@@ -86,6 +86,22 @@ export function parsePasskeyLine(line: string): PasskeySigner {
   return { name, origin, rpId, credentialId, key };
 }
 
+// The signers file has two kinds of lines. Returns the passkeys it names, and the file's text without
+// their lines: each one is replaced by an empty line, so that the line numbers stay the same.
+export function splitSigners(text: string): { passkeys: PasskeySigner[]; withoutPasskeys: string } {
+  const passkeys: PasskeySigner[] = [];
+  const others = text.split("\n").map((line, index) => {
+    if (!isPasskeyLine(line)) return line;
+    try {
+      passkeys.push(parsePasskeyLine(line));
+    } catch (error) {
+      throw new Error(`line ${index + 1} is not a good passkey line: ${error instanceof Error ? error.message : String(error)}`);
+    }
+    return "";
+  });
+  return { passkeys, withoutPasskeys: others.join("\n") };
+}
+
 // The sha256 of the public key as the signers line gives it, in hex. The registration page shows the
 // same number, so the two can be compared by eye.
 export function keyFingerprint(signer: PasskeySigner): string {
