@@ -1,6 +1,6 @@
 import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
-import { CardError, parseCard } from "./card.ts";
+import { CardError, hashedPaths, parseCard } from "./card.ts";
 import type { Card } from "./card.ts";
 import { hashCard } from "./hash.ts";
 import type { FrozenFile } from "./hash.ts";
@@ -30,19 +30,21 @@ function loadCard(repo: string, id: string): Loaded {
   try {
     const cardBytes = readFileSync(join(repo, "laws", `${id}.md`));
     const card = parseCard(cardBytes, id);
-    const frozen = card.frozen.map((path) => readFrozen(repo, path));
-    return { id, ok: true, card, hash: hashCard(cardBytes, frozen) };
+    const paths = hashedPaths(card);
+    const present = paths.ifPresent.filter((path) => existsSync(join(repo, path)));
+    const files = [...paths.required, ...present].map((path) => readHashed(repo, path));
+    return { id, ok: true, card, hash: hashCard(cardBytes, files) };
   } catch (error) {
     if (error instanceof CardError) return { id, ok: false, problem: error.message };
     return { id, ok: false, problem: `laws/${id}.md cannot be read: ${String(error)}` };
   }
 }
 
-// A missing frozen file is an error. It must never hash like an empty file.
-function readFrozen(repo: string, path: string): FrozenFile {
+// A missing frozen file or figure is an error. It must never hash like an empty file.
+function readHashed(repo: string, path: string): FrozenFile {
   try {
     return { path, bytes: readFileSync(join(repo, path)) };
   } catch {
-    throw new CardError(`frozen file ${path} is missing or cannot be read`);
+    throw new CardError(`${path} is missing or cannot be read; the card lists it as frozen or as its figure`);
   }
 }

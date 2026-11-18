@@ -12,6 +12,8 @@ import { hashCard } from "../../src/hash.ts";
 import type { FrozenFile } from "../../src/hash.ts";
 
 export type HashFunction = (card: Uint8Array, frozen: FrozenFile[]) => string;
+// The hash of one card in a repository, or null if the card cannot be hashed.
+export type HashInRepository = (repo: string, id: string) => string | null;
 type Change = { card: Uint8Array; frozen: FrozenFile[]; what: string };
 
 const CASES = 400;
@@ -25,6 +27,38 @@ export function blockedCase(hash: HashFunction): void {
   const approved = hash(card, [{ path: "test/x01.test.ts", bytes: bytes("assert(startIsRefused())\n") }]);
   const edited = hash(card, [{ path: "test/x01.test.ts", bytes: bytes("assert(true)\n") }]);
   assert.notEqual(edited, approved, "the test file behind the check was edited and the hash did not change");
+}
+
+// Blocked by the law: the picture on a card is redrawn after approval, and the hash stays what was approved.
+// The picture is the figure file the card names and the rendered text that "laws show" prints.
+export function blockedPictureRedrawn(hashOf: HashInRepository): void {
+  const repo = mkdtempSync(join(tmpdir(), "laws-t01-picture-"));
+  try {
+    const spec = join(repo, "figures", "X-02.spec.json");
+    const rendered = join(repo, "figures", "X-02.txt");
+    mkdirSync(join(repo, "laws"));
+    mkdirSync(join(repo, "figures"));
+    writeFileSync(join(repo, "laws", "X-02.md"), "---\nid: X-02\ngrade: prose\nfigure: figures/X-02.spec.json\n---\n# X-02 Two ports\n");
+    writeFileSync(spec, '{ "ports": ["tcp 22", "udp 41641"] }\n');
+    writeFileSync(rendered, "tcp 22\nudp 41641\n");
+    const approved = hashOf(repo, "X-02");
+    assert.ok(approved !== null, "a card with its figure in place must have a hash");
+
+    writeFileSync(spec, '{ "ports": ["tcp 22", "tcp 8101"] }\n');
+    assert.notEqual(hashOf(repo, "X-02"), approved, "the figure file was changed and the hash did not change");
+    writeFileSync(spec, '{ "ports": ["tcp 22", "udp 41641"] }\n');
+    assert.equal(hashOf(repo, "X-02"), approved, "the same bytes must give the same hash again");
+
+    writeFileSync(rendered, "tcp 22\ntcp 8101\n");
+    assert.notEqual(hashOf(repo, "X-02"), approved, "the picture was redrawn and the hash did not change");
+    rmSync(rendered);
+    assert.notEqual(hashOf(repo, "X-02"), approved, "the picture was removed and the hash did not change");
+
+    rmSync(spec);
+    assert.equal(hashOf(repo, "X-02"), null, "a card whose figure file is missing got a hash");
+  } finally {
+    rmSync(repo, { recursive: true, force: true });
+  }
 }
 
 // Over generated cards: listing the same files in another order gives the same hash,
@@ -137,7 +171,7 @@ function flipOneByte(random: () => number, content: Uint8Array): Uint8Array {
 
 type Approved = { folder: string; repo: string; signers: string };
 
-// A repository with one card X-01 that freezes test/x01.test.ts, approved with a throwaway key.
+// A repository with one card X-01 that freezes test/x01.test.ts and has a figure, approved with a throwaway key.
 function approvedRepository(): Approved {
   const folder = mkdtempSync(join(tmpdir(), "laws-t01-"));
   const repo = join(folder, "repo");
@@ -146,10 +180,11 @@ function approvedRepository(): Approved {
   mkdirSync(join(repo, "laws", "approvals"), { recursive: true });
   mkdirSync(join(repo, "test"));
   mkdirSync(join(repo, "src"));
-  writeFileSync(
-    join(repo, "laws", "X-01.md"),
-    "---\nid: X-01\ngrade: chosen\ncheck: true\nbite: false\nfrozen: [test/x01.test.ts]\n---\n# X-01 Start only when ready\n",
-  );
+  mkdirSync(join(repo, "figures"));
+  const frontMatter = "id: X-01\ngrade: chosen\ncheck: true\nfrozen: [test/x01.test.ts]\nfigure: figures/X-01.spec.json\n";
+  writeFileSync(join(repo, "laws", "X-01.md"), `---\n${frontMatter}---\n# X-01 Start only when ready\n`);
+  writeFileSync(join(repo, "figures", "X-01.spec.json"), '{ "steps": ["idle", "cup on scale", "start"] }\n');
+  writeFileSync(join(repo, "figures", "X-01.txt"), "idle -> cup on scale -> start\n");
   writeFileSync(join(repo, "test", "x01.test.ts"), "assert(startIsRefused())\n");
   writeFileSync(join(repo, "src", "start.ts"), "export const ready = false;\n");
 
@@ -160,7 +195,7 @@ function approvedRepository(): Approved {
   const card = loadCards(repo)[0];
   if (card === undefined || !card.ok) throw new Error("the card of the test repository must load");
   const manifest = join(repo, "laws", "approvals", "one.manifest");
-  writeFileSync(manifest, `X-01 ${card.hash}\n`);
+  writeFileSync(manifest, `signed: 2026-01-01T00:00:00.000Z\nX-01 ${card.hash}\n`);
   run("ssh-keygen", ["-Y", "sign", "-f", key, "-n", "laws", manifest]);
   return { folder, repo, signers };
 }
@@ -193,6 +228,26 @@ if (import.meta.main) {
       assert.equal(shownState(at), "changed", "the frozen test file changed by one byte");
     } finally {
       rmSync(at.folder, { recursive: true, force: true });
+    }
+  });
+
+  test("T-01 blocked case of the picture, on the hash of a card in a repository", () => {
+    blockedPictureRedrawn((repo, id) => {
+      const card = loadCards(repo).find((candidate) => candidate.id === id);
+      return card !== undefined && card.ok ? card.hash : null;
+    });
+  });
+
+  test("T-01 blocked: the picture on a card is redrawn after approval", () => {
+    for (const file of ["X-01.txt", "X-01.spec.json"]) {
+      const at = approvedRepository();
+      try {
+        assert.equal(shownState(at), "approved");
+        appendFileSync(join(at.repo, "figures", file), " ");
+        assert.equal(shownState(at), "changed", `figures/${file} changed by one byte`);
+      } finally {
+        rmSync(at.folder, { recursive: true, force: true });
+      }
     }
   });
 
