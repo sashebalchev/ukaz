@@ -1,6 +1,6 @@
 import { loadCards } from "./cards.ts";
 import type { Loaded } from "./cards.ts";
-import { runCommand } from "./run.ts";
+import { lastLines, runCommand } from "./run.ts";
 
 // How one card's check went. "shown" is the command and the last lines it printed, for a failure.
 type Outcome = { ok: boolean; summary: string; shown: string };
@@ -40,9 +40,10 @@ async function checkCard(repo: string, loaded: Loaded): Promise<Outcome> {
   const run = await runCommand(card.check, repo, card.timeout);
   let why: string;
   if (run.timedOut) why = `stopped at its time limit of ${card.timeout} s`;
-  else if (run.leftBehind) why = "it started processes that could not be stopped";
+  else if (run.notStopped) why = "it started processes that could not be stopped";
   else if (run.exitCode === null) why = "the check was killed by a signal";
   else if (run.exitCode !== 0) why = `the check exited ${run.exitCode}`;
+  else if (run.leftRunning) why = "it left a process running; the process was stopped";
   else return { ok: true, summary: "ok", shown: "" };
-  return { ok: false, summary: `FAIL  ${why}`, shown: `--- ${card.id}: ${card.check}\n${run.lastLines}` };
+  return { ok: false, summary: `FAIL  ${why}`, shown: `--- ${card.id}: ${card.check}\n${lastLines(run.output, 15)}` };
 }

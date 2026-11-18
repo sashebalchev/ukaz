@@ -7,7 +7,8 @@ import { loadCards } from "../../src/cards.ts";
 import {
   blockedCardWithoutCheck,
   blockedCheckThatNeverReturns,
-  nothingRunsAfterAPassingCheck,
+  blockedDetachedProcess,
+  blockedProcessLeftRunning,
 } from "./t06-check.test.ts";
 import type { Check } from "./t06-check.test.ts";
 
@@ -42,8 +43,11 @@ const skipsCardsWithoutCheck: Check = (repo) => runSimply(repo, "is skipped");
 test("bite: stopping only the shell fails the blocked case of a check that never returns", () => {
   blockedCheckThatNeverReturns(stopsOnlyTheShell);
 });
-test("bite: not looking for leftovers fails after a check that passes", () => {
-  nothingRunsAfterAPassingCheck(stopsOnlyTheShell);
+test("bite: not looking for what a check left fails the blocked case of a detached process", () => {
+  blockedDetachedProcess(stopsOnlyTheShell);
+});
+test("bite: not looking for what a check left fails for a process in the check's own group", () => {
+  blockedProcessLeftRunning(stopsOnlyTheShell);
 });
 test("bite: skipping a card without a check fails the blocked case", () => {
   blockedCardWithoutCheck(skipsCardsWithoutCheck);

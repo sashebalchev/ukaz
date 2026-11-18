@@ -15,8 +15,13 @@ const CLI = join(import.meta.dirname, "../../src/cli.ts");
 
 // A check that never returns. Before it hangs it starts a second process and notes its number.
 const NEVER_RETURNS = "sleep 300 & echo $! > started.pid; wait";
-// A check that passes at once and leaves a process behind.
+// A check that returns at once and leaves a process behind, in its own process group.
 const LEAVES_A_PROCESS = "sleep 300 & echo $! > started.pid";
+// A check that returns at once and leaves a detached process behind: one in a session of its own,
+// which killing the check's process group does not reach.
+const DETACHES = 'const child = require("node:child_process").spawn("sleep", ["300"], { detached: true, stdio: "ignore" });';
+const NOTES = 'require("node:fs").writeFileSync("started.pid", String(child.pid)); child.unref();';
+const LEAVES_A_DETACHED_PROCESS = `'${process.execPath}' -e '${DETACHES} ${NOTES}'`;
 
 // ---- The property. The bite runs the same functions against broken ways to run checks. ----
 
@@ -67,14 +72,25 @@ export function blockedCheckThatNeverReturns(check: Check): void {
   });
 }
 
-// When a check ends by itself, nothing it started is still running either.
-export function nothingRunsAfterAPassingCheck(check: Check): void {
+// Blocked by the law: a check that starts a detached process and returns at once. The process is
+// stopped and the card counts as failed.
+export function blockedDetachedProcess(check: Check): void {
+  leavesAProcess(check, LEAVES_A_DETACHED_PROCESS, "the check had returned and left a detached process");
+}
+
+// The same for a process that stays in the check's own process group.
+export function blockedProcessLeftRunning(check: Check): void {
+  leavesAProcess(check, LEAVES_A_PROCESS, "the check had returned and left a process");
+}
+
+function leavesAProcess(check: Check, command: string, when: string): void {
   withRepository((repo) => {
-    writeCard(repo, "A-01", ["grade: chosen", `check: ${LEAVES_A_PROCESS}`]);
+    writeCard(repo, "A-01", ["grade: chosen", `check: ${command}`]);
     const { exitCode, printed } = check(repo);
-    stopWhatIsStillRunning(repo, "the check had ended");
-    assert.equal(exitCode, 0, printed);
-    assert.equal(lastLine(printed), "ALL LAWS HOLD");
+    stopWhatIsStillRunning(repo, when);
+    assert.equal(exitCode, 1, `a check that leaves a process running did not fail the run:\n${printed}`);
+    assert.equal(lastLine(printed), "SOME LAWS FAIL");
+    assert.match(printed, /^A-01 .*FAIL.*left a process running/m);
   });
 }
 
@@ -138,7 +154,10 @@ if (import.meta.main) {
   test("T-06 allowed: passing checks, and a prose card with no check", () => allowedPassingChecksAndProse(real));
   test("T-06 a failing check is named, shown, and fails the run", () => blockedFailingCheck(real));
   test("T-06 blocked: a check that never returns", () => blockedCheckThatNeverReturns(real));
-  test("T-06 nothing is left running after a check that passes", () => nothingRunsAfterAPassingCheck(real));
+  test("T-06 blocked: a check that starts a detached process and returns", () => blockedDetachedProcess(real));
+  test("T-06 a process left in the check's own group is stopped too, and fails the card", () => {
+    blockedProcessLeftRunning(real);
+  });
   test("T-06 blocked: a card above prose grade with no check", () => blockedCardWithoutCheck(real));
 
   test("T-06 a card that cannot be read fails the run", () => {
