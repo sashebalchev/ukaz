@@ -1,12 +1,20 @@
 import { spawnSync } from "node:child_process";
-import { existsSync, readdirSync, readFileSync } from "node:fs";
+import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { ID_PATTERN } from "./card.ts";
+import { LawsError } from "./cards.ts";
+import { isPasskeyLine, MAX_PASSKEY_FILE_BYTES, parsePasskeyLine, passkeyProblem } from "./passkey.ts";
+import type { PasskeySigner } from "./passkey.ts";
 
-// A signed batch is laws/approvals/<name>.manifest plus <name>.manifest.sig, a detached SSH signature
-// over the exact bytes of the manifest. The manifest reads:
+// A signed batch is laws/approvals/<name>.manifest plus the proof that you approved it. The proof is one of:
 //
-//   signed: 2026-11-18T09:15:00.123Z      when the signer signed it; this is what orders the batches
+//   <name>.manifest.sig     a detached SSH signature over the exact bytes of the manifest
+//   <name>.passkey.json     a passkey signature from the phone over the hash of those bytes (see passkey.ts)
+//
+// The manifest reads:
+//
+//   signed: 2026-11-18T09:15:00.123Z      when it was signed; this is what orders the batches
 //   T-01 <sha256 of the card>             the card is approved at this hash
 //   T-03 retired                          the card is retired: its file may be removed
 //
@@ -55,16 +63,47 @@ export function parseManifest(text: string): Manifest {
   return { time, entries };
 }
 
+// The signers file, read once. It has two kinds of lines. A line whose second word is "passkey" names a
+// passkey, and this tool reads it itself. Every other line is an SSH allowed-signers line and is left to
+// ssh-keygen. If there are passkey lines, ssh-keygen gets a private copy of the file without them.
+export type Signers = { file: string; sshFile: string; passkeys: PasskeySigner[]; close: () => void };
+
+export function openSigners(signersFile: string): Signers {
+  const lines = readFileSync(signersFile, "utf8").split("\n");
+  const passkeys: PasskeySigner[] = [];
+  const forSsh = lines.map((line, index) => {
+    if (!isPasskeyLine(line)) return line;
+    try {
+      passkeys.push(parsePasskeyLine(line));
+    } catch (error) {
+      const why = error instanceof Error ? error.message : String(error);
+      throw new LawsError(`line ${index + 1} of the signers file ${signersFile} is not a good passkey line: ${why}.`);
+    }
+    return ""; // an empty line, so that the line numbers stay the same
+  });
+  if (passkeys.length === 0) return { file: signersFile, sshFile: signersFile, passkeys, close: () => {} };
+
+  const folder = mkdtempSync(join(tmpdir(), "laws-signers-"));
+  const sshFile = join(folder, "allowed_signers");
+  writeFileSync(sshFile, forSsh.join("\n"), { mode: 0o600 });
+  return { file: signersFile, sshFile, passkeys, close: () => rmSync(folder, { recursive: true, force: true }) };
+}
+
 // Only manifests with a good signature count. The others are listed in notes and otherwise ignored.
 export function readApprovals(repo: string, signersFile: string): Approvals {
   const notes: string[] = [];
   const good: Manifest[] = [];
   const folder = join(repo, "laws", "approvals");
   const names = existsSync(folder) ? readdirSync(folder).sort() : [];
-  for (const name of names.filter((candidate) => candidate.endsWith(".manifest"))) {
-    const manifest = readSignedManifest(join(folder, name), signersFile);
-    if (typeof manifest === "string") notes.push(`laws/approvals/${name} is ignored: ${manifest}`);
-    else good.push(manifest);
+  const signers = openSigners(signersFile);
+  try {
+    for (const name of names.filter((candidate) => candidate.endsWith(".manifest"))) {
+      const manifest = readSignedManifest(join(folder, name), signers);
+      if (typeof manifest === "string") notes.push(`laws/approvals/${name} is ignored: ${manifest}`);
+      else good.push(manifest);
+    }
+  } finally {
+    signers.close();
   }
 
   // A retirement ends every approval signed up to that moment. An approval counts if it is later.
@@ -88,10 +127,18 @@ export function readApprovals(repo: string, signersFile: string): Approvals {
   return { live, retired, newest, notes };
 }
 
-// Returns the manifest, or the reason why it does not count.
-function readSignedManifest(manifestFile: string, signersFile: string): Manifest | string {
+// The passkey proof of laws/approvals/<name>.manifest is <name>.passkey.json.
+export function passkeyFileOf(manifestFile: string): string {
+  return `${manifestFile.slice(0, -".manifest".length)}.passkey.json`;
+}
+
+// Returns the manifest, or the reason why it does not count. One good proof is enough.
+function readSignedManifest(manifestFile: string, signers: Signers): Manifest | string {
   const signatureFile = `${manifestFile}.sig`;
-  if (!existsSync(signatureFile)) return "it has no .sig file";
+  const passkeyFile = passkeyFileOf(manifestFile);
+  const hasSignature = existsSync(signatureFile);
+  const hasPasskey = existsSync(passkeyFile);
+  if (!hasSignature && !hasPasskey) return "it has no .sig file and no .passkey.json file";
 
   // Read once: the bytes that are checked against the signature are the bytes that are parsed.
   const bytes = readFileSync(manifestFile);
@@ -101,21 +148,53 @@ function readSignedManifest(manifestFile: string, signersFile: string): Manifest
   } catch (error) {
     return error instanceof Error ? error.message : String(error);
   }
-  return signatureProblem(bytes, signatureFile, signersFile) ?? manifest;
+  const problems: string[] = [];
+  if (hasSignature) {
+    const problem = sshProblem(bytes, signatureFile, signers);
+    if (problem === null) return manifest;
+    problems.push(problem);
+  }
+  if (hasPasskey) {
+    const problem = passkeyFileProblem(bytes, passkeyFile, signers);
+    if (problem === null) return manifest;
+    problems.push(problem);
+  }
+  return problems.join("; and ");
 }
 
 // Returns null if the signature over these manifest bytes was made by a key in the signers file.
 export function signatureProblem(manifest: Uint8Array, signatureFile: string, signersFile: string): string | null {
-  const found = spawnSync(SSH_KEYGEN, ["-Y", "find-principals", "-f", signersFile, "-s", signatureFile], {
+  const signers = openSigners(signersFile);
+  try {
+    return sshProblem(manifest, signatureFile, signers);
+  } finally {
+    signers.close();
+  }
+}
+
+// Returns null if the passkey file approves these manifest bytes with a passkey from the signers file.
+export function passkeyFileProblem(manifest: Uint8Array, passkeyFile: string, signers: Signers): string | null {
+  let bytes: Buffer;
+  try {
+    bytes = readFileSync(passkeyFile);
+  } catch {
+    return "its .passkey.json file cannot be read";
+  }
+  if (bytes.length > MAX_PASSKEY_FILE_BYTES) return "its .passkey.json file is larger than 16 KB";
+  return passkeyProblem(manifest, bytes.toString("utf8"), signers.passkeys, signers.file);
+}
+
+function sshProblem(manifest: Uint8Array, signatureFile: string, signers: Signers): string | null {
+  const found = spawnSync(SSH_KEYGEN, ["-Y", "find-principals", "-f", signers.sshFile, "-s", signatureFile], {
     encoding: "utf8",
   });
   if (found.error !== undefined) return `ssh-keygen could not be run (${found.error.message}); install OpenSSH`;
-  if (found.status !== 0) return `its signing key is not in ${signersFile}`;
+  if (found.status !== 0) return `its signing key is not in ${signers.file}`;
 
   for (const principal of found.stdout.split("\n").filter((line) => line !== "")) {
     const verified = spawnSync(
       SSH_KEYGEN,
-      ["-Y", "verify", "-f", signersFile, "-I", principal, "-n", NAMESPACE, "-s", signatureFile],
+      ["-Y", "verify", "-f", signers.sshFile, "-I", principal, "-n", NAMESPACE, "-s", signatureFile],
       { input: manifest, encoding: "utf8" },
     );
     if (verified.status === 0) return null;

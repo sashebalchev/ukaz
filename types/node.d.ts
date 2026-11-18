@@ -2,12 +2,19 @@
 // The usual @types/node is an npm package, and this project installs none.
 // If you use a Node function that is missing here, add it with the signature from the Node documentation.
 
+type BufferEncoding = "utf8" | "hex" | "base64" | "base64url";
 interface Buffer extends Uint8Array {
-  toString(encoding?: "utf8" | "hex"): string;
+  toString(encoding?: BufferEncoding): string;
   includes(value: string | number, fromIndex?: number): boolean;
+  equals(other: Uint8Array): boolean;
+  subarray(begin?: number, end?: number): Buffer;
 }
 declare const Buffer: {
   alloc(size: number, fill?: number): Buffer;
+  from(text: string, encoding?: BufferEncoding): Buffer;
+  from(bytes: Uint8Array | ArrayBuffer | readonly number[]): Buffer;
+  concat(list: readonly Uint8Array[]): Buffer;
+  byteLength(text: string): number;
 };
 
 declare class TextEncoder {
@@ -90,10 +97,30 @@ declare module "node:os" {
 declare module "node:crypto" {
   interface Hash {
     update(data: string | Uint8Array): Hash;
-    digest(encoding: "hex"): string;
+    digest(): Buffer;
+    digest(encoding: "hex" | "base64url"): string;
   }
   export function createHash(algorithm: string): Hash;
   export function randomBytes(size: number): Buffer;
+
+  // A public or private key. "spki" is the usual DER form of a public key, "pkcs8" of a private key.
+  export interface KeyObject {
+    readonly type: "public" | "private" | "secret";
+    readonly asymmetricKeyType?: string;
+    readonly asymmetricKeyDetails?: { namedCurve?: string };
+    export(options: { format: "der"; type: "spki" | "pkcs8" }): Buffer;
+  }
+  export function createPublicKey(key: { key: Uint8Array; format: "der"; type: "spki" }): KeyObject;
+  // dsaEncoding "der" is the form of an ECDSA signature that passkeys use.
+  export function verify(
+    algorithm: string,
+    data: Uint8Array,
+    key: { key: KeyObject; dsaEncoding: "der" },
+    signature: Uint8Array,
+  ): boolean;
+  // The next two are used by tests only: a software passkey needs a key and has to sign with it.
+  export function generateKeyPairSync(type: "ec", options: { namedCurve: string }): { publicKey: KeyObject; privateKey: KeyObject };
+  export function sign(algorithm: string, data: Uint8Array, key: { key: KeyObject; dsaEncoding: "der" }): Buffer;
 }
 
 declare module "node:child_process" {

@@ -164,10 +164,10 @@ test("a file that is not UTF-8, or that carries terminal escape codes, is reject
   assert.equal(parse(`${FULL}\tA tab and an accent are fine: é ║\n`).id, "D-03");
 });
 
-test("the eight cards of this repository parse", () => {
+test("the eleven cards of this repository parse", () => {
   const folder = join(import.meta.dirname, "../laws");
   const ids = readdirSync(folder).filter((name) => name.endsWith(".md")).map((name) => name.slice(0, -3)).sort();
-  assert.deepEqual(ids, ["T-01", "T-02", "T-03", "T-04", "T-05", "T-06", "T-07", "T-08"]);
+  assert.deepEqual(ids, ["T-01", "T-02", "T-03", "T-04", "T-05", "T-06", "T-07", "T-08", "T-09", "T-10", "T-11"]);
   for (const id of ids) {
     const card = parseCard(readFileSync(join(folder, `${id}.md`)), id);
     assert.equal(card.id, id);
