@@ -2,31 +2,27 @@ import { loadCards } from "./cards.ts";
 import type { Loaded } from "./cards.ts";
 import { runCommand } from "./run.ts";
 
-type Outcome = { ok: boolean; summary: string; command: string; output: string };
+// How one card's check went. "shown" is the command and the last lines it printed, for a failure.
+type Outcome = { ok: boolean; summary: string; shown: string };
 
 // laws check: one short line per card, then the failing cards with the last lines of their output,
 // then ALL LAWS HOLD or SOME LAWS FAIL. Returns the exit code.
 export async function checkCommand(repo: string, print: (line: string) => void): Promise<number> {
   const cards = loadCards(repo);
-  const failed: Outcome[] = [];
+  const failures: Outcome[] = [];
   for (const card of cards) {
     const outcome = await checkCard(repo, card);
     print(`${card.id}  ${outcome.summary}`);
-    if (!outcome.ok) failed.push(outcome);
+    if (!outcome.ok) failures.push(outcome);
   }
-  if (cards.length === 0) {
-    print("no law cards in laws/, so nothing was checked");
-    print("SOME LAWS FAIL");
-    return 1;
-  }
-  if (failed.length === 0) {
+  if (cards.length === 0) print("no law cards in laws/, so nothing was checked");
+  if (cards.length > 0 && failures.length === 0) {
     print("ALL LAWS HOLD");
     return 0;
   }
-  for (const outcome of failed.filter((failure) => failure.output !== "")) {
+  for (const failure of failures.filter((outcome) => outcome.shown !== "")) {
     print("");
-    print(`--- ${outcome.command}`);
-    print(outcome.output);
+    print(failure.shown);
   }
   print("");
   print("SOME LAWS FAIL");
@@ -34,23 +30,19 @@ export async function checkCommand(repo: string, print: (line: string) => void):
 }
 
 async function checkCard(repo: string, loaded: Loaded): Promise<Outcome> {
-  const fail = (why: string, command = "", output = ""): Outcome => ({
-    ok: false,
-    summary: `FAIL  ${why}`,
-    command: `${loaded.id}: ${command}`,
-    output,
-  });
-  if (!loaded.ok) return fail(`the card is broken: ${loaded.problem}`);
+  if (!loaded.ok) return { ok: false, summary: `FAIL  the card is broken: ${loaded.problem}`, shown: "" };
 
   const { card } = loaded;
   if (card.check === null) {
-    if (card.grade === "prose") return { ok: true, summary: "prose, no check", command: "", output: "" };
-    return fail(`no check, and grade ${card.grade} needs one`);
+    if (card.grade === "prose") return { ok: true, summary: "prose, no check", shown: "" };
+    return { ok: false, summary: `FAIL  no check, and grade ${card.grade} needs one`, shown: "" };
   }
   const run = await runCommand(card.check, repo, card.timeout);
-  if (run.timedOut) return fail(`stopped at its time limit of ${card.timeout} s`, card.check, run.lastLines);
-  if (run.leftBehind) return fail("it started processes that could not be stopped", card.check, run.lastLines);
-  if (run.exitCode === null) return fail("the check was killed by a signal", card.check, run.lastLines);
-  if (run.exitCode !== 0) return fail(`the check exited ${run.exitCode}`, card.check, run.lastLines);
-  return { ok: true, summary: "ok", command: card.check, output: "" };
+  let why: string;
+  if (run.timedOut) why = `stopped at its time limit of ${card.timeout} s`;
+  else if (run.leftBehind) why = "it started processes that could not be stopped";
+  else if (run.exitCode === null) why = "the check was killed by a signal";
+  else if (run.exitCode !== 0) why = `the check exited ${run.exitCode}`;
+  else return { ok: true, summary: "ok", shown: "" };
+  return { ok: false, summary: `FAIL  ${why}`, shown: `--- ${card.id}: ${card.check}\n${run.lastLines}` };
 }
