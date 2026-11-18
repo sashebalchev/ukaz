@@ -1,0 +1,188 @@
+// The check of law T-03 (laws/T-03.md): the laws command cannot sign.
+// This file and its bite are frozen with the card, so everything the check means is written here.
+
+import assert from "node:assert/strict";
+import { spawnSync } from "node:child_process";
+import { createHash } from "node:crypto";
+import { existsSync, lstatSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { test } from "node:test";
+import { loadCards } from "../../src/cards.ts";
+
+// What is under test: "laws sign" on the world's repository, with this signer command or with none.
+// It returns the exit code.
+export type Sign = (world: World, signerCommand: string | null) => number | null;
+
+// A temporary folder: a repository with two cards that nobody approved, the owner's key and the signers
+// file that names it, a stranger's key, and a home folder. The owner's key also lies in <home>/.ssh,
+// where a program that wanted to sign by itself would look.
+export type World = {
+  folder: string;
+  repo: string;
+  signers: string;
+  home: string;
+  ownerKey: string;
+  strangerKey: string;
+  log: string;
+};
+
+const SOURCES = join(import.meta.dirname, "../../src");
+const CLI = join(SOURCES, "cli.ts");
+const REAL_SIGNER = join(import.meta.dirname, "../../signer/signer.ts");
+
+// ---- The property. The bite runs the same functions against broken variants. ----
+
+// Blocked by the law: "laws sign" is run with no signer available. It fails and writes nothing.
+export function blockedNoSigner(sign: Sign): void {
+  withWorld((world) => {
+    const before = snapshot(world.repo);
+    assert.notEqual(sign(world, null), 0, "laws sign succeeded without a signer");
+    assert.equal(snapshot(world.repo), before, "laws sign wrote to the repository without a signer");
+
+    assert.notEqual(sign(world, join(world.folder, "no-such-signer")), 0, "laws sign succeeded with a signer that does not exist");
+    assert.equal(snapshot(world.repo), before, "laws sign wrote to the repository although the signer does not exist");
+  });
+}
+
+// Allowed by the law: "laws sign" hands the batch to the signer, checks what comes back, and stores it.
+export function allowedSignerSigns(sign: Sign): void {
+  withWorld((world) => {
+    assert.equal(sign(world, signerWith(world, world.ownerKey)), 0, "laws sign failed with a good signer");
+
+    const folder = join(world.repo, "laws", "approvals");
+    const stored = existsSync(folder) ? readdirSync(folder).sort() : [];
+    assert.equal(stored.length, 2, `expected one manifest and its signature, found: ${stored.join(", ")}`);
+    const [manifest, signature] = stored.map((name) => join(folder, name));
+    assert.ok(manifest?.endsWith(".manifest") && signature === `${manifest}.sig`, `unexpected names: ${stored.join(", ")}`);
+
+    const lines = loadCards(world.repo).map((card) => (card.ok ? `${card.id} ${card.hash}\n` : "broken\n"));
+    assert.equal(readFileSync(manifest ?? "", "utf8"), lines.join(""), "the stored manifest is not the two cards as they are");
+    const options = ["-Y", "verify", "-f", world.signers, "-I", "owner", "-n", "laws", "-s", signature ?? ""];
+    const verified = spawnSync("ssh-keygen", options, { input: readFileSync(manifest ?? ""), encoding: "utf8" });
+    assert.equal(verified.status, 0, "the stored signature does not verify against the signers file");
+    assert.equal(readFileSync(world.log, "utf8").trim().split("\n").length, 1, "the signer was not asked exactly once");
+  });
+}
+
+// A signature is stored only after it was verified: a signer with a key nobody named, and a signer that
+// signs another list than it was asked to, both leave the repository as it was.
+export function storesOnlyWhatVerifies(sign: Sign): void {
+  withWorld((world) => {
+    const before = snapshot(world.repo);
+    assert.notEqual(sign(world, signerWith(world, world.strangerKey)), 0, "a signature by an unknown key was accepted");
+    assert.equal(snapshot(world.repo), before, "a signature by an unknown key was stored");
+  });
+  withWorld((world) => {
+    const before = snapshot(world.repo);
+    // laws calls: <signer command> --repo <repo> --out <folder> <id>... This one signs only A-01.
+    const script = join(world.folder, "signs-less.sh");
+    writeFileSync(script, `exec ${signerWith(world, world.ownerKey)} --repo "$2" --out "$4" A-01\n`);
+    assert.notEqual(sign(world, `sh '${script}'`), 0, "a signature over another list than asked was accepted");
+    assert.equal(snapshot(world.repo), before, "a signature over another list than asked was stored");
+  });
+}
+
+// The source of the laws command has no way to sign: it runs ssh-keygen only to verify, uses no
+// signing function, touches no private key, and imports nothing from outside src/.
+export function findWaysToSign(sources: Map<string, string>): string[] {
+  const found: string[] = [];
+  for (const [file, text] of sources) {
+    const says = (what: string): void => {
+      found.push(`${file} ${what}`);
+    };
+    for (const [, from] of text.matchAll(/\bfrom\s+"([^"]+)"/g)) {
+      if (!from?.startsWith("node:") && !from?.startsWith("./")) says(`imports from ${from}`);
+    }
+    if (/\b(sign|createSign|createPrivateKey|generateKeyPair|generateKeyPairSync)\s*\(/.test(text)) {
+      says("calls a function that signs or makes a key");
+    }
+    if (/PRIVATE KEY|id_ed25519|id_rsa|id_ecdsa|\.ssh\b/.test(text)) says("mentions a private key or ~/.ssh");
+    if (/ssh-keygen|"-Y"/.test(text) && file !== "approvals.ts") says("runs ssh-keygen outside approvals.ts");
+    const uses = [...text.matchAll(/-Y\b["',\s]*([A-Za-z-]*)/g)].map((match) => match[1]);
+    for (const use of uses) {
+      if (use !== "find-principals" && use !== "verify") says(`runs ssh-keygen -Y ${use}`);
+    }
+  }
+  return found;
+}
+
+export function readSources(): Map<string, string> {
+  const files = readdirSync(SOURCES).filter((name) => name.endsWith(".ts"));
+  return new Map(files.map((name) => [name, readFileSync(join(SOURCES, name), "utf8")]));
+}
+
+// The real signer program with this key, as a signer command for "laws sign".
+export function signerWith(world: World, key: string): string {
+  return `'${process.execPath}' '${REAL_SIGNER}' --key '${key}' --log '${world.log}'`;
+}
+
+function withWorld(body: (world: World) => void): void {
+  const folder = mkdtempSync(join(tmpdir(), "laws-t03-"));
+  try {
+    const world = {
+      folder,
+      repo: join(folder, "repo"),
+      signers: join(folder, "allowed_signers"),
+      home: join(folder, "home"),
+      ownerKey: join(folder, "owner-key"),
+      strangerKey: join(folder, "stranger-key"),
+      log: join(folder, "signer.log"),
+    };
+    mkdirSync(join(world.repo, "laws"), { recursive: true });
+    mkdirSync(join(world.home, ".ssh"), { recursive: true });
+    for (const id of ["A-01", "A-02"]) {
+      const frontMatter = `---\nid: ${id}\ngrade: chosen\ncheck: true\nbite: false\n---\n`;
+      writeFileSync(join(world.repo, "laws", `${id}.md`), `${frontMatter}# ${id} A law\n`);
+    }
+    run("ssh-keygen", ["-q", "-t", "ed25519", "-N", "", "-f", world.ownerKey]);
+    run("ssh-keygen", ["-q", "-t", "ed25519", "-N", "", "-f", world.strangerKey]);
+    writeFileSync(world.signers, `owner ${readFileSync(`${world.ownerKey}.pub`, "utf8")}`);
+    writeFileSync(join(world.home, ".ssh", "id_ed25519"), readFileSync(world.ownerKey), { mode: 0o600 });
+    body(world);
+  } finally {
+    rmSync(folder, { recursive: true, force: true });
+  }
+}
+
+// Every path under a folder with what it holds, to see whether anything changed.
+function snapshot(folder: string): string {
+  const seen: string[] = [];
+  const walk = (path: string): void => {
+    if (lstatSync(path).isDirectory()) {
+      seen.push(`${path} folder`);
+      for (const name of readdirSync(path).sort()) walk(join(path, name));
+    } else {
+      seen.push(`${path} ${createHash("sha256").update(readFileSync(path)).digest("hex")}`);
+    }
+  };
+  walk(folder);
+  return seen.join("\n");
+}
+
+function run(program: string, options: string[]): string {
+  const result = spawnSync(program, options, { encoding: "utf8" });
+  assert.equal(result.status, 0, `${program} ${options.join(" ")} failed: ${result.stderr}`);
+  return result.stdout;
+}
+
+// ---- The check: the property against the real laws command and its real source. ----
+
+if (import.meta.main) {
+  // The real command, run with the world's home folder and with no signer in its environment.
+  const real: Sign = (world, signerCommand) => {
+    const options = ["sign", "--repo", world.repo, "--signers", world.signers];
+    if (signerCommand !== null) options.push("--signer", signerCommand);
+    const environment = { ...process.env, HOME: world.home, LAWS_SIGNER: undefined, LAWS_SIGNERS: undefined };
+    return spawnSync(process.execPath, [CLI, ...options], { encoding: "utf8", env: environment }).status;
+  };
+
+  test("T-03 blocked: laws sign with no signer fails and writes nothing", () => blockedNoSigner(real));
+  test("T-03 allowed: the signer signs, laws checks and stores", () => allowedSignerSigns(real));
+  test("T-03 a signature is stored only after it was verified", () => storesOnlyWhatVerifies(real));
+  test("T-03 the source of the laws command has no way to sign", () => {
+    const sources = readSources();
+    assert.ok(sources.has("cli.ts") && sources.has("sign.ts") && sources.has("approvals.ts"), "src/ was not read");
+    assert.deepEqual(findWaysToSign(sources), []);
+  });
+}
