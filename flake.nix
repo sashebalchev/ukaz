@@ -45,7 +45,7 @@
             runHook preInstall
             mkdir -p $out/lib/laws $out/bin
             cp -r src signer server package.json $out/lib/laws/
-            substituteInPlace $out/lib/laws/signer/signer.ts $out/lib/laws/signer/laptop.ts $out/lib/laws/src/approvals.ts \
+            substituteInPlace $out/lib/laws/signer/laptop.ts $out/lib/laws/src/approvals.ts \
               --replace-fail 'const SSH_KEYGEN = "ssh-keygen";' 'const SSH_KEYGEN = "${pkgs.openssh}/bin/ssh-keygen";'
             ${lib.optionalString (fprintd != null) ''
               substituteInPlace $out/lib/laws/signer/laptop.ts \
@@ -65,7 +65,7 @@
           };
         };
 
-      # laws and the terminal signer. laws runs checks with "sh"; bash is put last on its PATH in case
+      # laws, the command. laws runs checks with "sh"; bash is put last on its PATH in case
       # there is none.
       lawsPackage =
         pkgs:
@@ -74,7 +74,6 @@
           description = "Law cards with a check, a bite and a signed approval";
           commands = {
             laws = "src/cli.ts";
-            laws-signer = "signer/signer.ts";
           };
           flags.laws = "--suffix PATH : ${lib.makeBinPath [ pkgs.bash ]}";
         };
@@ -345,7 +344,7 @@
             '';
 
         # The installed commands start and find their files. They are run with an empty environment:
-        # each must find ssh-keygen without PATH. The terminal signer must refuse without a terminal,
+        # each must find ssh-keygen without PATH. laws sign must refuse when it has no signing server,
         # the helper must refuse "any" finger and make its key, and the server must come up.
         package =
           let
@@ -356,12 +355,7 @@
           in
           pkgs.runCommand "laws-package" { } ''
             ${laws}/bin/laws show T-01 --repo ${self} | grep "^id: T-01$" > /dev/null
-            ${pkgs.openssh}/bin/ssh-keygen -q -t ed25519 -N "" -C throwaway -f key
-            mkdir out
-            (env -i ${laws}/bin/laws-signer --repo ${self} --key key --log log --out out T-01 2>&1 || true) \
-              | grep "there is no terminal" > /dev/null
-            grep "refused:no-terminal T-01=" log > /dev/null
-            test ! -e out/manifest.sig
+            (env -i ${laws}/bin/laws sign --repo ${self} 2>&1 || true) | grep "no signer: pass --server" > /dev/null
 
             (env -i ${signerd}/bin/laws-signerd ${helper} --finger any 2>&1 || true) | grep "refused on purpose" > /dev/null
             test ! -e helper-key
