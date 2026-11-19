@@ -92,7 +92,7 @@ test(
 );
 
 test(
-  "the figure is signed with the card: laws and the signer agree on the hash, and a redrawn picture needs a new signature",
+  "the figure is signed with the card: laws and the approver agree on the hash, and a redrawn picture needs a new signature",
   withWorld((world) => {
     writeCard(world, "A-01", [...GOOD, "figure: figures/A-01.spec.json"]);
     mkdirSync(join(world.repo, "figures"));
@@ -130,7 +130,7 @@ test(
     for (const id of ["A-01", "A-02", "A-03"]) writeCard(world, id, GOOD);
     const one = signCards(world, ["A-02"]);
     assert.equal(one.exitCode, 0, one.printed);
-    assert.match(one.printed, /sign +A-02 +[0-9a-f]{64} +A law/, "the signer shows id, hash and title");
+    assert.match(one.printed, /sign +A-02 +[0-9a-f]{64} +A law/, "laws prints the list that the server computed: id, hash and title");
     assert.deepEqual(["A-01", "A-02", "A-03"].map((id) => statusOf(world, id)[2]), ["waiting", "approved", "waiting"]);
 
     const rest = signCards(world);
@@ -158,7 +158,7 @@ test(
     assert.equal(refused.exitCode, 1);
     assert.match(refused.printed, /A-02 +TOOTHLESS/);
     assert.deepEqual(approvals(world), []);
-    assert.ok(!existsSync(world.log), "the signer was never called");
+    assert.ok(!existsSync(world.log), "nothing was offered to the approver");
 
     assert.equal(signCards(world, ["A-09"]).exitCode, 1);
     assert.equal(signCards(world, ["A-01"]).exitCode, 0, "the good card can still be signed by name");
@@ -166,7 +166,7 @@ test(
 );
 
 test(
-  "sign: the signer command can come from LAWS_SIGNER, and no signer is an error that says what to do",
+  "sign: the server can come from LAWS_SIGNER, and no signer is an error that says what to do",
   withWorld((world) => {
     writeCard(world, "A-01", GOOD);
     const none = lawsRaw(["sign", "--repo", world.repo, "--signers", world.signers]);
@@ -174,8 +174,8 @@ test(
     assert.match(none.printed, /no signer: pass --server .* or --signer .* or set LAWS_SIGNER/);
     assert.deepEqual(approvals(world), []);
 
-    const fromVariable = lawsRaw(["sign", "--repo", world.repo, "--signers", world.signers], {
-      LAWS_SIGNER: world.signerCommand,
+    const fromVariable = lawsRaw(["sign", "--phone", "--repo", world.repo, "--signers", world.signers], {
+      LAWS_SIGNER: `server:${world.server}`,
     });
     assert.equal(fromVariable.exitCode, 0, fromVariable.printed);
     assert.equal(statusOf(world, "A-01")[2], "approved");
@@ -183,18 +183,25 @@ test(
 );
 
 test(
-  "sign: the folder handed to the signer is private and is removed afterwards",
+  "sign: the scratch folder is removed afterwards, whether the signing worked or not",
   withWorld((world) => {
     writeCard(world, "A-01", GOOD);
-    // laws calls: <signer command> --repo <repo> --out <folder> <id>... This one only looks at the folder.
-    const script = join(world.folder, "looks-at-out.sh");
-    const seen = join(world.folder, "seen.txt");
-    writeFileSync(script, `stat -c '%a %n' "$4" > '${seen}'\nexit 1\n`);
-    const refused = laws(world, ["sign", "--signer", `sh '${script}'`]);
+    const scratch = join(world.folder, "tmp");
+    mkdirSync(scratch);
+    const environment = { TMPDIR: scratch };
+    const signed = lawsRaw(["sign", "--server", world.server, "--phone", "--repo", world.repo, "--signers", world.signers], environment);
+    assert.equal(signed.exitCode, 0, signed.printed);
+    assert.deepEqual(readdirSync(scratch), [], "a scratch folder was left behind after a signing");
+
+    // A signature that is not accepted: the stranger's key is not in the signers file.
+    writeCard(world, "A-02", GOOD);
+    const stranger = join(world.folder, "stranger-key");
+    assert.equal(spawnSync("ssh-keygen", ["-q", "-t", "ed25519", "-N", "", "-f", stranger]).status, 0);
+    const otherSigners = join(world.folder, "other_signers");
+    writeFileSync(otherSigners, `owner ${readFileSync(`${stranger}.pub`, "utf8")}`);
+    const refused = lawsRaw(["sign", "--server", world.server, "--phone", "--repo", world.repo, "--signers", otherSigners], environment);
     assert.equal(refused.exitCode, 1);
-    const [mode, folder] = readFileSync(seen, "utf8").trim().split(" ");
-    assert.equal(mode, "700");
-    assert.ok(folder !== undefined && !existsSync(folder), "the folder must be gone after laws sign");
+    assert.deepEqual(readdirSync(scratch), [], "a scratch folder was left behind after a refused signing");
   }),
 );
 
@@ -238,8 +245,8 @@ test(
     writeFileSync(join(world.repo, "laws", "A-02.md"), card);
     const retired = retireCards(world, ["A-02"]);
     assert.equal(retired.exitCode, 0, retired.printed);
-    assert.match(retired.printed, /^ *retire +A-02 +Old rule$/m);
-    assert.match(readFileSync(world.log, "utf8"), / signed A-02=retired\n$/);
+    assert.match(retired.printed, /^ *retire +A-02 +Old rule$/m, "laws prints what it asks to retire, with the title");
+    assert.match(readFileSync(world.log, "utf8"), / signed A-02=retired\n$/, "the approver was asked to retire A-02 and nothing else");
     assert.equal(statusOf(world, "A-02")[2], "retired");
     assert.match(laws(world, ["gate"]).printed, /^closed\n +A-02: retired, but laws\/A-02\.md is still there/);
     assert.match(signCards(world).printed, /nothing to sign/, "a retired card is not signed again unless it is named");
@@ -259,7 +266,7 @@ test(
     rmSync(join(world.repo, "laws", "A-02.md"));
     assert.equal(statusOf(world, "A-02")[2], "missing");
     assert.equal(laws(world, ["gate"]).exitCode, 1);
-    assert.equal(lawsRaw(["retire", "--repo", world.repo, "--signers", world.signers, "--signer", world.signerCommand]).exitCode, 1);
+    assert.equal(lawsRaw(["retire", "--server", world.server, "--phone", "--repo", world.repo, "--signers", world.signers]).exitCode, 1);
   }),
 );
 

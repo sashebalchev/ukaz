@@ -8,40 +8,34 @@ import type { KeyObject } from "node:crypto";
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { startStandIn } from "./standin.ts";
+import type { StandIn } from "./standin.ts";
 
 export const CLI = join(import.meta.dirname, "../src/cli.ts");
-export const SIGNER = join(import.meta.dirname, "../signer/signer.ts");
 
 // A temporary folder with an empty repository, a throwaway key, the signers file that names it, and a
-// signer command. The signer needs a person at a terminal, so the command is a stand-in: it runs the
-// real signer with that key and types the word that the signer asks for.
-export type World = { folder: string; repo: string; signers: string; key: string; signerCommand: string; log: string };
+// signing server (test/standin.ts) with an approver that signs with that key. server is its address,
+// log the approver's log: one line for each list it approved. The server stops when the test ends.
+export type World = { folder: string; repo: string; signers: string; key: string; server: string; log: string };
 
 export type Printed = { exitCode: number | null; printed: string };
 
 export function withWorld(body: (world: World) => void | Promise<void>): () => Promise<void> {
   return async () => {
     const folder = mkdtempSync(join(tmpdir(), "laws-test-"));
+    let approver: StandIn | null = null;
     try {
       const key = join(folder, "key");
       const log = join(folder, "signer.log");
-      const standIn = join(folder, "signer-with-a-person.mjs");
-      const typesTheWord = "process.exitCode = runSigner(process.argv.slice(2), (word) => word, (line) => console.log(line));";
-      writeFileSync(standIn, `import { runSigner } from ${JSON.stringify(SIGNER)};\n${typesTheWord}\n`);
-      const world = {
-        folder,
-        repo: join(folder, "repo"),
-        signers: join(folder, "allowed_signers"),
-        key,
-        signerCommand: `'${process.execPath}' '${standIn}' --key '${key}' --log '${log}'`,
-        log,
-      };
-      mkdirSync(join(world.repo, "laws"), { recursive: true });
       const made = spawnSync("ssh-keygen", ["-q", "-t", "ed25519", "-N", "", "-f", key], { encoding: "utf8" });
       assert.equal(made.status, 0, `ssh-keygen failed: ${made.stderr}`);
+      approver = await startStandIn(folder, key, log);
+      const world = { folder, repo: join(folder, "repo"), signers: join(folder, "allowed_signers"), key, server: approver.url, log };
+      mkdirSync(join(world.repo, "laws"), { recursive: true });
       writeFileSync(world.signers, `owner ${readFileSync(`${key}.pub`, "utf8")}`);
       await body(world);
     } finally {
+      await approver?.stop();
       rmSync(folder, { recursive: true, force: true });
     }
   };
@@ -71,13 +65,14 @@ export const GOOD = [
   "bite-says: the blocked case was caught",
 ];
 
-// Approves cards through the signer. With no ids: every card that is waiting or changed.
+// Approves cards through the world's signing server. With no ids: every card that is waiting or changed.
+// --phone: the laptop's fingerprint helper is not asked, even if this machine has one.
 export function signCards(world: World, ids: string[] = []): Printed {
-  return laws(world, ["sign", ...ids, "--signer", world.signerCommand]);
+  return laws(world, ["sign", ...ids, "--server", world.server, "--phone"]);
 }
 
 export function retireCards(world: World, ids: string[]): Printed {
-  return laws(world, ["retire", ...ids, "--signer", world.signerCommand]);
+  return laws(world, ["retire", ...ids, "--server", world.server, "--phone"]);
 }
 
 // A software passkey: it does with a key in memory what a phone does with the key in its chip.
