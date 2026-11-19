@@ -13,7 +13,7 @@ import type { FrozenFile } from "./hash.ts";
 // but no other file. The receiver opens no path. It computes every hash from these bytes, and it
 // refuses the whole request if anything is missing, unknown, too large or written sloppily.
 
-export const MAX_FILE_BYTES = 1024 * 1024; // one file, as in the terminal signer
+export const MAX_FILE_BYTES = 1024 * 1024; // one file
 export const MAX_TOTAL_BYTES = 8 * 1024 * 1024; // all files of one request together
 export const MAX_CARDS = 100;
 // The request as text: base64 makes the bytes a third longer, and the names need some room.

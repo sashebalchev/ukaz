@@ -47,7 +47,7 @@ Only `id` and `grade` are required by the parser. A card above `prose` grade wit
 The parser is strict. It rejects unknown keys, duplicate keys, empty values, blank lines and comments in the
 front matter, an id that does not match the file name, and paths that are absolute, contain `..` or are spelled
 in a roundabout way (`./a`, `a//b`). It also rejects control characters anywhere in the card, because the
-signer shows the title on a terminal. Values are taken literally: no quotes, no multi-line values. Lists are
+title is shown on a terminal. Values are taken literally: no quotes, no multi-line values. Lists are
 written on one line as `[a, b]`. Every `laws/*.md` file is a card.
 
 ## Commands
@@ -117,8 +117,8 @@ A repository with no cards fails `check`, `bite`, `gate` and `verify`: nothing w
    The first is an SSH key, in the form that `ssh-keygen` knows as "allowed signers". The second names a
    passkey: see "The signers file: a passkey line" below.
 5. **Signing.** `laws` holds no key and cannot sign. `laws sign` runs every picked card's bite and refuses the
-   batch if one is toothless. Then it asks for the signature, in one of the ways below, and stores what comes
-   back only if the manifest is the list it asked for, its time is later than the newest manifest already
+   batch if one is toothless. Then it asks the signing server for the signature (see below), and stores what
+   comes back only if the manifest is the list it asked for, or a part of it, its time is later than the newest manifest already
    there, and the signature verifies against the signers file.
 6. **Retiring.** A card that was approved cannot just be deleted: the gate closes with `missing`. Run
    `laws retire <id>` while the card is still there, approve it, and then remove the file. A retired id that
@@ -349,47 +349,6 @@ export LAWS_SIGNER=server:https://pi.example.ts.net/laws/
 laws sign
 ```
 
-## Signing at the terminal, without a server
-
-The first signer is still there: a small program, `signer/signer.ts`, installed as `laws-signer`.
-`laws sign --signer "<command>"` (or `LAWS_SIGNER="<command>"`) calls it with
-`--repo <repo> --out <folder> <id>... --retire <id>...`. The folder is private to you and is removed afterwards.
-
-```
-laws-signer --repo <path> --key <private key file> --log <file> --out <folder> [<id>...] [--retire <id>]...
-```
-
-It reads the cards itself and computes the hashes itself. Then it prints the list, one line per card:
-
-```
-  sign    T-01  14a27a86...  A card's hash covers everything that gives it meaning
-  retire  T-03  The laws command cannot sign
-```
-
-Then it asks at the terminal: you type `sign` and press Enter (`retire` if the list only retires). It reads the
-answer from `/dev/tty`, not from standard input. With any other answer, or with no terminal, it signs nothing.
-Either way it appends one line to its log: time, key fingerprint, `signed` or `refused:...`, and the list.
-No option and no environment variable skips the question. On a signature it writes `manifest` and
-`manifest.sig` into `--out`.
-
-It refuses the whole batch if a file is not a regular file inside the repository, wherever a symbolic link may
-lead, or is larger than 1 MB. It checks this on the open file, not on the path. It never writes inside the
-repository.
-
-A possible setup on one machine, with the key readable by root only. It is written from the design and was
-not run: this repository was built without `sudo`.
-
-```bash
-sudo mkdir -p /etc/laws /root/laws
-sudo ssh-keygen -t ed25519 -N "" -C "laws approvals" -f /root/laws/key
-echo "alex namespaces=\"laws\" $(sudo cat /root/laws/key.pub)" | sudo tee /etc/laws/allowed_signers
-export LAWS_SIGNER="sudo $(command -v laws-signer) --key /root/laws/key --log /var/log/laws-signer.log"
-laws sign          # in your own terminal: sudo asks first, then the signer shows the list and asks for the word
-```
-
-Run it yourself, in a terminal. The signer has to be attached to it: started from a program without a
-terminal, such as an agent's shell, it refuses.
-
 ## What each way proves, and what it does not
 
 **The phone (cards T-10, T-11).** The signature names the exact list, the web address, and says that the phone
@@ -411,8 +370,8 @@ server, after the list was sent to you.
 - Every program that runs as you can call the helper. The reader then waits for the named finger. Touch it
   only for a signing that you started yourself, and use a finger that unlocks nothing else.
 
-**The typed word (card T-04).** A typed word does not prove a person: a program that makes its own terminal can
-type it. What proves a person there is the `sudo` prompt, which does not show the list.
+**What is shown (card T-04).** The helper and the page sign the list that they computed from the bytes of the
+cards and showed. That is only as good as the screen that shows it: see the limits of T-09 and T-11 above.
 
 **The server (card T-11).** Nothing that is stored on the server, and no answer that it gives, makes
 `laws verify` pass for a list that neither the passkey nor the laptop key signed. The server can refuse to
@@ -433,19 +392,21 @@ nix flake check --override-input nixpkgs nixpkgs --no-write-lock-file
 ```
 
 The flake does not pin nixpkgs and has no `flake.lock`. A `nix` command without `--no-write-lock-file` writes
-one; commit it if you want the pin. Its packages are `default` (`laws` and `laws-signer`), `laws-signerd` and
+one; commit it if you want the pin. Its packages are `default` (`laws`), `laws-signerd` and
 `laws-server`.
 
 `test/laws/tNN-*.test.ts` is the check of card T-NN and `tNN-*.bite.test.ts` is its bite. A bite imports the
 property from its check and runs it against a variant that the bite file breaks on purpose, so every test in a
-bite file fails. Both files are frozen with their card, so they use no shared helpers. The checks of T-01, T-02,
+bite file fails. Both files are frozen with their card, so they use no shared helpers, except `test/standin.ts`, which
+the cards that need a signing to succeed (T-03, T-07, T-08) freeze as well. The checks of T-01, T-02,
 T-05, T-08, T-10 and T-11 use generated cases; a failure prints `LAWS_SEED=<n>` to replay it. Tests create
 throwaway keys in a temporary folder and remove it.
 
 Tests have no terminal, no fingerprint reader, no phone and no browser.
 
-- The terminal signer's main function takes the function that asks the question as an argument, and tests
-  pass a stand-in that answers.
+- Where a test needs `laws sign` to succeed, it runs a real signing server with a stand-in approver
+  (`test/standin.ts`): a program that fetches each waiting request, computes the list from the bytes and signs
+  it with a throwaway key, as the helper does after the finger matched. The tests sign nothing else.
 - The helper takes the finger check as an argument, and tests pass a stand-in for the reader. The real check
   is tested against shell scripts that print what `fprintd-verify` prints. The helper is told with a switch,
   which the command line cannot set, that the tests' server is at `http://127.0.0.1`.
