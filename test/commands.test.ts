@@ -171,7 +171,7 @@ test(
     writeCard(world, "A-01", GOOD);
     const none = lawsRaw(["sign", "--repo", world.repo, "--signers", world.signers]);
     assert.equal(none.exitCode, 1);
-    assert.match(none.printed, /no signer: pass --server .* or --signer .* or set LAWS_SIGNER/);
+    assert.match(none.printed, /no signer: pass --server <address>, or set LAWS_SIGNER=server:<address>/);
     assert.deepEqual(approvals(world), []);
 
     const fromVariable = lawsRaw(["sign", "--phone", "--repo", world.repo, "--signers", world.signers], {

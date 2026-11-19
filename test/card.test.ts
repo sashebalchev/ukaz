@@ -171,7 +171,8 @@ test("the eleven cards of this repository parse", () => {
   for (const id of ids) {
     const card = parseCard(readFileSync(join(folder, `${id}.md`)), id);
     assert.equal(card.id, id);
-    assert.equal(card.frozen.length, 2, `${id} freezes its check and its bite`);
+    assert.ok(card.frozen.length >= 2, `${id} freezes its check and its bite, and what they stand on`);
+    for (const path of card.frozen.filter((file) => file.startsWith("test/laws/"))) assert.ok(card.check?.includes(path.slice(10)) || card.bite?.includes(path.slice(10)), `${path} is frozen but is neither the check nor the bite of ${id}`);
     assert.ok(card.check !== null && card.bite !== null && card.biteSays !== null);
     assert.ok(!card.title.startsWith(id), "the title is shown without the id");
   }

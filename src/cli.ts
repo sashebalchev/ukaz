@@ -9,7 +9,7 @@ import { gate } from "./gate.ts";
 import { retireCommand, signCommand } from "./sign.ts";
 import { readLawbook, resolveSigners, verifyRepo } from "./verify.ts";
 
-const USAGE = `usage: laws [--repo <path>] [--signers <file>] [--server <address> [--phone | --laptop <socket>] | --signer "<command>"] <command>
+const USAGE = `usage: laws [--repo <path>] [--signers <file>] [--server <address> [--phone | --laptop <socket>]] <command>
 
   status           one line per card: id, grade, state, title
   show <id>        print a card, and its figure if a rendered .txt exists
@@ -29,13 +29,11 @@ const USAGE = `usage: laws [--repo <path>] [--signers <file>] [--server <address
              (default: $LAWS_SIGNER, written as server:<address>)
   --phone    with --server: wait for the phone, and do not offer the finger on the laptop
   --laptop   with --server: the socket of the laptop's fingerprint helper
-             (default: /run/laws-signer/socket, if it is there)
-  --signer   a signer command, instead of the server: it asks for a typed word (default: $LAWS_SIGNER)`;
+             (default: /run/laws-signer/socket, if it is there)`;
 
 type Arguments = {
   repo: string;
   signers: string | null;
-  signer: string | null;
   laptop: string | null;
   server: string | null;
   phone: boolean;
@@ -50,7 +48,7 @@ function readArguments(words: string[]): Arguments {
     const word = words[i] ?? "";
     if (word === "--phone") {
       options.set(word, "yes");
-    } else if (["--repo", "--signers", "--signer", "--laptop", "--server"].includes(word)) {
+    } else if (["--repo", "--signers", "--laptop", "--server"].includes(word)) {
       const value = words[i + 1];
       if (value === undefined || options.has(word)) throw new LawsError(`${word} needs one value, once.\n\n${USAGE}`);
       options.set(word, value);
@@ -66,7 +64,6 @@ function readArguments(words: string[]): Arguments {
   return {
     repo: resolve(options.get("--repo") ?? "."),
     signers: options.get("--signers") ?? null,
-    signer: options.get("--signer") ?? null,
     laptop: options.get("--laptop") ?? null,
     server: options.get("--server") ?? null,
     phone: options.has("--phone"),
@@ -76,8 +73,8 @@ function readArguments(words: string[]): Arguments {
 }
 
 async function main(words: string[]): Promise<number> {
-  const { repo, signers, signer, laptop, server, phone, command, rest } = readArguments(words);
-  const how = { signerCommand: signer, laptop, server, phone, signersFlag: signers };
+  const { repo, signers, laptop, server, phone, command, rest } = readArguments(words);
+  const how = { laptop, server, phone, signersFlag: signers };
   const print = (line: string): void => console.log(line);
   if (!["show", "sign", "retire"].includes(command) && rest.length > 0) {
     throw new LawsError(`"laws ${command}" takes no further words, got: ${rest.join(" ")}`);
