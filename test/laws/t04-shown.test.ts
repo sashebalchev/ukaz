@@ -50,9 +50,10 @@ export async function allowedShownIsSigned(side: Side): Promise<void> {
     const done = await running.approve(id, async () => {});
     const expected = CARDS.map((card) => ({ id: card.id, title: card.title, hash: hashOfCard(card) }));
     assert.deepEqual(done.shown, expected, "the list that was shown is not computed from the bytes of the three cards");
-    assert.ok(done.signed !== null, "nothing was signed for three cards that the side showed");
-    assert.deepEqual(linesOf(done.signed), expected.map(({ id: card, hash }) => ({ id: card, hash })), "a list that was not shown was signed");
-    assert.match(done.signed.split("\n")[0] ?? "", /^signed: \d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/, "the signed list does not start with its time");
+    const { signed } = done;
+    if (signed === null) throw new Error("nothing was signed for three cards that the side showed");
+    assert.deepEqual(linesOf(signed), expected.map(({ id: card, hash }) => ({ id: card, hash })), "a list that was not shown was signed");
+    assert.match(signed.split("\n")[0] ?? "", /^signed: \d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/, "the signed list does not start with its time");
   });
 }
 
@@ -80,10 +81,11 @@ export async function blockedChangedAfterShowing(side: Side): Promise<void> {
   await withSide(side, async (world, running) => {
     const id = await post(world.server);
     const done = await running.approve(id, async () => changeStoredBytes(world, id));
-    assert.ok(done.shown !== null, "the side showed no list");
-    if (done.signed !== null) {
-      const shown = done.shown.map(({ id: card, hash }) => ({ id: card, hash }));
-      assert.deepEqual(linesOf(done.signed), shown, "a list that was not shown was signed, after the bytes changed");
+    const { shown, signed } = done;
+    if (shown === null) throw new Error("the side showed no list");
+    if (signed !== null) {
+      const same = shown.map(({ id: card, hash }) => ({ id: card, hash }));
+      assert.deepEqual(linesOf(signed), same, "a list that was not shown was signed, after the bytes changed");
     }
   });
 }
@@ -195,7 +197,7 @@ function changeStoredBytes(world: World, id: string): void {
   const file = join(world.state, id, "request.json");
   const request = JSON.parse(readFileSync(file, "utf8")) as { cards: { files: { bytes: string }[] }[] };
   const first = request.cards[0]?.files[0];
-  assert.ok(first !== undefined, "the stored request has no file to change");
+  if (first === undefined) throw new Error("the stored request has no file to change");
   first.bytes = Buffer.from("changed on the server\n").toString("base64");
   writeFileSync(file, JSON.stringify(request));
 }

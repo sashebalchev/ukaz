@@ -56,7 +56,7 @@ export async function startStandIn(folder: string, key: string, log: string, lie
   return {
     url: `http://127.0.0.1:${port}/`,
     stop: async () => {
-      child.kill("SIGTERM");
+      if (child.pid !== undefined) process.kill(child.pid, "SIGTERM");
       await gone;
     },
   };
