@@ -10,7 +10,7 @@ import type { Start } from "./t09-fingerprint.test.ts";
 
 const quiet = (): void => {};
 
-// Broken on purpose: it asks the reader for any finger, as sudo does, whatever finger its settings name.
+// Broken on purpose: it asks the reader for any finger, as a login prompt does, whatever finger its settings name.
 const takesAnyFinger: Start = (settings, reader, milliseconds) =>
   startLaptopSigner(settings, (_finger, user, limit) => reader.check("any", user, limit), quiet, { fingerMilliseconds: milliseconds, loopbackHttp: true });
 

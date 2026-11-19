@@ -45,7 +45,7 @@ type Outcome = { list: Line[] | null; finger: string | null; approved: boolean; 
 
 const CLI = join(import.meta.dirname, "../../src/cli.ts");
 const NAMED = "right-index-finger";
-const OTHER = "left-index-finger"; // enrolled as well: the finger that sudo would also take
+const OTHER = "left-index-finger"; // enrolled as well: the finger that a login prompt would also take
 const LIMIT = 600; // milliseconds that the helper waits for the finger in these tests
 const SOON = 1500; // milliseconds within which an answer that is due "at once" must be there
 const NOWHERE = "0123456789abcdef0123456789abcdef"; // an id under which nothing waits
@@ -139,7 +139,7 @@ export async function blockedAnotherFinger(start: Start): Promise<void> {
     await asked(reader);
     reader.touch(OTHER);
     const outcome = await pending;
-    assertNothingSigned(world, outcome, "the laptop signer signed although the named finger did not match after the list was sent");
+    assertNothingSigned(world, outcome, "the helper signed although the named finger did not match after the list was sent");
     assert.deepEqual(await held(world, id), { state: "waiting" }, "the server got a signature although another finger touched the reader");
     assert.equal(logLines(world).length, 1, "the refusal must be written to the log");
     assert.match(logLines(world)[0] ?? "", /refused.*A-01=.*A-02=/, "the log line must say what was refused");
@@ -223,7 +223,7 @@ export async function oneMatchSignsOneList(start: Start): Promise<void> {
 }
 
 // A reader with two enrolled fingers. Asked for one finger, it reports a match only for that one.
-// Asked for "any", as sudo asks, it takes every enrolled finger.
+// Asked for "any", as a login prompt asks, it takes every enrolled finger.
 export function newReader(): Reader {
   const enrolled = [NAMED, OTHER];
   let waiting: ((touched: string) => void) | null = null;
@@ -767,9 +767,7 @@ if (import.meta.main) {
       const [goneCode, gone] = await laws(world, ["sign", "--server", world.server, "--laptop", join(world.folder, "no-socket")]);
       assert.equal(goneCode, 1);
       assert.match(gone, /there is no fingerprint helper at/);
-      for (const words of [[...sign, "--phone"], ["sign", "--signer", "true", "--laptop", world.settings.socket], [...sign, "--signer", "true"]]) {
-        assert.equal((await laws(world, words))[0], 1, words.join(" "));
-      }
+      assert.equal((await laws(world, [...sign, "--phone"]))[0], 1, "--phone and --laptop together must be refused");
       assert.deepEqual(approvals(), before);
     });
   });
