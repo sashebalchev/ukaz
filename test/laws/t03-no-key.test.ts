@@ -9,10 +9,12 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
 import { loadCards } from "../../src/cards.ts";
+import { startStandIn } from "../standin.ts";
+import type { Lie } from "../standin.ts";
 
-// What is under test: "laws sign" on the world's repository, with this signer command or with none.
-// It returns the exit code.
-export type Sign = (world: World, signerCommand: string | null) => number | null;
+// What is under test: "laws sign" on the world's repository, with the address of this signing server or
+// with none. It returns the exit code.
+export type Sign = (world: World, server: string | null) => Promise<number | null>;
 
 // A temporary folder: a repository with two cards that nobody approved, the owner's key and the signers
 // file that names it, a stranger's key, and a home folder. The owner's key also lies in <home>/.ssh,
@@ -29,26 +31,28 @@ export type World = {
 
 const SOURCES = join(import.meta.dirname, "../../src");
 const CLI = join(SOURCES, "cli.ts");
-const REAL_SIGNER = join(import.meta.dirname, "../../signer/signer.ts");
 
 // ---- The property. The bite runs the same functions against broken variants. ----
 
-// Blocked by the law: "laws sign" is run with no signer available. It fails and writes nothing.
-export function blockedNoSigner(sign: Sign): void {
-  withWorld((world) => {
+// Blocked by the law: "laws sign" is run with no signing server to ask. It fails and writes nothing.
+export async function blockedNoSigner(sign: Sign): Promise<void> {
+  await withWorld(async (world) => {
     const before = snapshot(world.repo);
-    assert.notEqual(sign(world, null), 0, "laws sign succeeded without a signer");
+    assert.notEqual(await sign(world, null), 0, "laws sign succeeded without a signer");
     assert.equal(snapshot(world.repo), before, "laws sign wrote to the repository without a signer");
 
-    assert.notEqual(sign(world, join(world.folder, "no-such-signer")), 0, "laws sign succeeded with a signer that does not exist");
-    assert.equal(snapshot(world.repo), before, "laws sign wrote to the repository although the signer does not exist");
+    assert.notEqual(await sign(world, "http://127.0.0.1:9/"), 0, "laws sign succeeded with a signing server that is not there");
+    assert.equal(snapshot(world.repo), before, "laws sign wrote to the repository although the signing server is not there");
   });
 }
 
-// Allowed by the law: "laws sign" hands the batch to the signer, checks what comes back, and stores it.
-export function allowedSignerSigns(sign: Sign): void {
-  withWorld((world) => {
-    assert.equal(sign(world, signerWith(world, world.ownerKey)), 0, "laws sign failed with a good signer");
+// Allowed by the law: "laws sign" posts the batch to the signing server, whose approver signs it with
+// the owner's key. laws checks what comes back, and stores it.
+export async function allowedSignerSigns(sign: Sign): Promise<void> {
+  await withWorld(async (world) => {
+    await withApprover(world, world.ownerKey, null, async (server) => {
+      assert.equal(await sign(world, server), 0, "laws sign failed with a good signing server");
+    });
 
     const folder = join(world.repo, "laws", "approvals");
     const names = existsSync(folder) ? readdirSync(folder).sort() : [];
@@ -63,26 +67,31 @@ export function allowedSignerSigns(sign: Sign): void {
     const options = ["-Y", "verify", "-f", world.signers, "-I", "owner", "-n", "laws", "-s", signature ?? ""];
     const verified = spawnSync("ssh-keygen", options, { input: readFileSync(manifest ?? ""), encoding: "utf8" });
     assert.equal(verified.status, 0, "the stored signature does not verify against the signers file");
-    assert.equal(readFileSync(world.log, "utf8").trim().split("\n").length, 1, "the signer was not asked exactly once");
+    assert.equal(readFileSync(world.log, "utf8").trim().split("\n").length, 1, "the approver was not asked exactly once");
   });
 }
 
-// A signature is stored only after it was verified: a signer with a key nobody named, and a signer that
-// signs another list than it was asked to, both leave the repository as it was.
-export function storesOnlyWhatVerifies(sign: Sign): void {
-  withWorld((world) => {
+// A signature is stored only after it was verified: a signing server whose approver has a key nobody
+// named, and servers that hand back another list than the one that was asked about (with the right
+// key: a hash that nobody computed from the card, and a card that was never asked) all leave the
+// repository as it was.
+export async function storesOnlyWhatVerifies(sign: Sign): Promise<void> {
+  await withWorld(async (world) => {
     const before = snapshot(world.repo);
-    assert.notEqual(sign(world, signerWith(world, world.strangerKey)), 0, "a signature by an unknown key was accepted");
+    await withApprover(world, world.strangerKey, null, async (server) => {
+      assert.notEqual(await sign(world, server), 0, "a signature by an unknown key was accepted");
+    });
     assert.equal(snapshot(world.repo), before, "a signature by an unknown key was stored");
   });
-  withWorld((world) => {
-    const before = snapshot(world.repo);
-    // laws calls: <signer command> --repo <repo> --out <folder> <id>... This one signs only A-01.
-    const script = join(world.folder, "signs-less.sh");
-    writeFileSync(script, `exec ${signerWith(world, world.ownerKey)} --repo "$2" --out "$4" A-01\n`);
-    assert.notEqual(sign(world, `sh '${script}'`), 0, "a signature over another list than asked was accepted");
-    assert.equal(snapshot(world.repo), before, "a signature over another list than asked was stored");
-  });
+  for (const lie of ["hash", "card"] as const) {
+    await withWorld(async (world) => {
+      const before = snapshot(world.repo);
+      await withApprover(world, world.ownerKey, lie, async (server) => {
+        assert.notEqual(await sign(world, server), 0, "a signature over another list than asked was accepted");
+      });
+      assert.equal(snapshot(world.repo), before, "a signature over another list than asked was stored");
+    });
+  }
 }
 
 // The source of the laws command has no way to sign: it runs ssh-keygen only to verify, uses no
@@ -114,16 +123,18 @@ export function readSources(): Map<string, string> {
   return new Map(files.map((name) => [name, readFileSync(join(SOURCES, name), "utf8")]));
 }
 
-// A signer command for "laws sign" that signs with this key. The signer needs a person at a terminal,
-// so the command is a stand-in: it runs the real signer and types the word that the signer asks for.
-export function signerWith(world: World, key: string): string {
-  const standIn = join(world.folder, "signer-with-a-person.mjs");
-  const typesTheWord = "process.exitCode = runSigner(process.argv.slice(2), (word) => word, (line) => console.log(line));";
-  writeFileSync(standIn, `import { runSigner } from ${JSON.stringify(REAL_SIGNER)};\n${typesTheWord}\n`);
-  return `'${process.execPath}' '${standIn}' --key '${key}' --log '${world.log}'`;
+// A signing server whose approver signs with this key, or, with lie, whose answers are not true.
+// See test/standin.ts. It stops when the body is done.
+async function withApprover(world: World, key: string, lie: Lie | null, body: (server: string) => Promise<void>): Promise<void> {
+  const approver = await startStandIn(world.folder, key, world.log, lie);
+  try {
+    await body(approver.url);
+  } finally {
+    await approver.stop();
+  }
 }
 
-function withWorld(body: (world: World) => void): void {
+async function withWorld(body: (world: World) => Promise<void>): Promise<void> {
   const folder = mkdtempSync(join(tmpdir(), "laws-t03-"));
   try {
     const world = {
@@ -133,7 +144,7 @@ function withWorld(body: (world: World) => void): void {
       home: join(folder, "home"),
       ownerKey: join(folder, "owner-key"),
       strangerKey: join(folder, "stranger-key"),
-      log: join(folder, "signer.log"),
+      log: join(folder, "approver.log"),
     };
     mkdirSync(join(world.repo, "laws"), { recursive: true });
     mkdirSync(join(world.home, ".ssh"), { recursive: true });
@@ -146,7 +157,7 @@ function withWorld(body: (world: World) => void): void {
     run("ssh-keygen", ["-q", "-t", "ed25519", "-N", "", "-f", world.strangerKey]);
     writeFileSync(world.signers, `owner ${readFileSync(`${world.ownerKey}.pub`, "utf8")}`);
     writeFileSync(join(world.home, ".ssh", "id_ed25519"), readFileSync(world.ownerKey), { mode: 0o600 });
-    body(world);
+    await body(world);
   } finally {
     rmSync(folder, { recursive: true, force: true });
   }
@@ -177,15 +188,16 @@ function run(program: string, options: string[]): string {
 
 if (import.meta.main) {
   // The real command, run with the world's home folder and with no signer in its environment.
-  const real: Sign = (world, signerCommand) => {
-    const options = ["sign", "--repo", world.repo, "--signers", world.signers];
-    if (signerCommand !== null) options.push("--signer", signerCommand);
+  // --phone: the laptop's fingerprint helper is not asked, even if this machine has one.
+  const real: Sign = async (world, server) => {
+    const options = ["sign", "--phone", "--repo", world.repo, "--signers", world.signers];
+    if (server !== null) options.push("--server", server);
     const environment = { ...process.env, HOME: world.home, LAWS_SIGNER: undefined, LAWS_SIGNERS: undefined };
     return spawnSync(process.execPath, [CLI, ...options], { encoding: "utf8", env: environment }).status;
   };
 
-  test("T-03 blocked: laws sign with no signer fails and writes nothing", () => blockedNoSigner(real));
-  test("T-03 allowed: the signer signs, laws checks and stores", () => allowedSignerSigns(real));
+  test("T-03 blocked: laws sign with no signing server fails and writes nothing", () => blockedNoSigner(real));
+  test("T-03 allowed: the server's approver signs, laws checks and stores", () => allowedSignerSigns(real));
   test("T-03 a signature is stored only after it was verified", () => storesOnlyWhatVerifies(real));
   test("T-03 the source of the laws command has no way to sign", () => {
     const sources = readSources();
