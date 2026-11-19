@@ -10,6 +10,7 @@ import { after, test } from "node:test";
 import { loadCards } from "../../src/cards.ts";
 import { gate } from "../../src/gate.ts";
 import { verifyRepo } from "../../src/verify.ts";
+import { startStandIn } from "../standin.ts";
 
 // What is under test: is the gate of this repository open, given this signers file?
 export type IsOpen = (repo: string, signersFile: string) => boolean;
@@ -22,7 +23,6 @@ type Signed = { time: number; byOwner: boolean; says: Map<string, number | "reti
 
 const CASES = 200;
 const CLI = join(import.meta.dirname, "../../src/cli.ts");
-const REAL_SIGNER = join(import.meta.dirname, "../../signer/signer.ts");
 const IDS = ["A-01", "A-02", "A-03", "A-04"];
 let repositoryCount = 0;
 let manifestCount = 0;
@@ -244,7 +244,7 @@ function int(random: () => number, below: number): number {
   return Math.floor(random() * below);
 }
 
-// ---- The check: the property against the real gate, and "laws retire" through the real signer. ----
+// ---- The check: the property against the real gate, and "laws retire" through a signing server. ----
 
 if (import.meta.main) {
   const real: IsOpen = (repo, signersFile) => {
@@ -263,33 +263,37 @@ if (import.meta.main) {
     removedOnlyBySignedRetirement(real, world, firstSeed());
   });
 
-  test("T-08 laws retire asks the signer, which shows the title, and the card can then be removed", () => {
+  test("T-08 laws retire asks the signing server, which lists the title, and the card can then be removed", async () => {
     const repo = newRepository(world, "command", ["A-01", "A-02"]);
     sign(repo, world.ownerKey, ["A-01", "A-02"], []);
 
-    // The signer needs a person at a terminal. This stand-in runs the real signer and types the word.
-    const standIn = join(world.folder, "signer-with-a-person.mjs");
-    const typesTheWord = `process.exitCode = runSigner(process.argv.slice(2), (word) => word, (line) => console.log(line));`;
-    writeFileSync(standIn, `import { runSigner } from ${JSON.stringify(REAL_SIGNER)};\n${typesTheWord}\n`);
-    const signer = `'${process.execPath}' '${standIn}' --key '${world.ownerKey}' --log '${join(world.folder, "signer.log")}'`;
-    const laws = (words: string[]): { exitCode: number | null; printed: string } => {
-      const result = spawnSync(process.execPath, [CLI, ...words, "--repo", repo, "--signers", world.signers, "--signer", signer], {
-        encoding: "utf8",
-      });
-      return { exitCode: result.status, printed: result.stdout + result.stderr };
-    };
+    // A signing server whose approver signs with the owner's key (test/standin.ts).
+    const log = join(world.folder, "approver.log");
+    const approver = await startStandIn(world.folder, world.ownerKey, log);
+    const env = { ...process.env, LAWS_SIGNER: undefined, LAWS_SIGNERS: undefined };
+    try {
+      const laws = (words: string[]): { exitCode: number | null; printed: string } => {
+        const result = spawnSync(process.execPath, [CLI, ...words, "--repo", repo, "--signers", world.signers], { encoding: "utf8", env });
+        return { exitCode: result.status, printed: result.stdout + result.stderr };
+      };
+      // --phone: the laptop's fingerprint helper is not asked, even if this machine has one.
+      const retire = (id: string): { exitCode: number | null; printed: string } => laws(["retire", id, "--server", approver.url, "--phone"]);
 
-    const retired = laws(["retire", "A-02"]);
-    assert.equal(retired.exitCode, 0, retired.printed);
-    assert.match(retired.printed, /^ *retire +A-02 +The law of A-02$/m, "the signer must show what it retires, with the title");
-    assert.ok(existsSync(join(repo, "laws", "A-02.md")), "laws retire removes no file itself");
+      const retired = retire("A-02");
+      assert.equal(retired.exitCode, 0, retired.printed);
+      assert.match(retired.printed, /^ *retire +A-02 +The law of A-02$/m, "laws must show what it retires, with the title");
+      assert.ok(existsSync(join(repo, "laws", "A-02.md")), "laws retire removes no file itself");
+      assert.match(readFileSync(log, "utf8"), / signed A-02=retired\n$/, "the approver was not asked to retire A-02 and nothing else");
 
-    rmSync(join(repo, "laws", "A-02.md"));
-    assert.equal(laws(["gate"]).printed, "open\n");
-    assert.equal(laws(["verify"]).exitCode, 0);
-    assert.match(laws(["status"]).printed, /^A-02 .*retired/m, "status must show the retired card");
+      rmSync(join(repo, "laws", "A-02.md"));
+      assert.equal(laws(["gate"]).printed, "open\n");
+      assert.equal(laws(["verify"]).exitCode, 0);
+      assert.match(laws(["status"]).printed, /^A-02 .*retired/m, "status must show the retired card");
 
-    const gone = laws(["retire", "A-02"]);
-    assert.notEqual(gone.exitCode, 0, "a card that is not there cannot be retired");
+      const gone = retire("A-02");
+      assert.notEqual(gone.exitCode, 0, "a card that is not there cannot be retired");
+    } finally {
+      await approver.stop();
+    }
   });
 }
