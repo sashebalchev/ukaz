@@ -98,7 +98,7 @@ export function prepareData(dir: string, law: Law): string | null {
 }
 
 // The data must still be what the system says. Returns a problem, or null.
-async function staleData(dir: string, law: Law): Promise<string | null> {
+export async function staleData(dir: string, law: Law): Promise<string | null> {
   const data = law.data;
   if (data?.fresh === undefined) return null;
   const run = await runCommand(data.fresh, dir, 180);
@@ -304,7 +304,7 @@ export async function bite(dir: string, say: (line: string) => void): Promise<nu
 async function biteBeforeSolution(dir: string, say: (line: string) => void): Promise<number> {
   const statement = await statementChecks(dir, () => {});
   if (!statement.ok) { say(`THE STATEMENT'S OWN CHECKS FAIL: ${statement.reason}`); return 0; }
-  say("the statement builds, its wrong versions are refuted, and the law fixes one behaviour");
+  say("the statement builds and its wrong versions are refuted" + (JSON.parse(readFileSync(join(dir, "law.json"), "utf8")) as Law).unique ? ", and the law fixes one behaviour" : "");
   const copy = await copyOf(dir);
   try {
     writeFileSync(join(copy, "Solution.lean"), readFileSync(join(dir, "Challenge.lean"), "utf8"));

@@ -10,7 +10,7 @@
       "temp",
       "speed"
     ],
-    "fresh": "nix eval --json \"git+file:///home/alex/nixos-config?rev=7f5c950a72db403d2824f67cba057cadd7ed09f9#nixosConfigurations.framework.config.hardware.fw-fanctrl.config.strategies.quiet.speedCurve\""
+    "fresh": "nix eval --json \"git+file:///home/alex/nixos-config?ref=main#nixosConfigurations.framework.config.hardware.fw-fanctrl.config.strategies.quiet.speedCurve\""
   },
   "examples": {
     "columns": [
