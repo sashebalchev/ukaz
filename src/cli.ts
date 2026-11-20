@@ -7,12 +7,14 @@ import { LawsError, loadCards } from "./cards.ts";
 import { checkCommand } from "./check.ts";
 import { gate } from "./gate.ts";
 import { retireCommand, signCommand } from "./sign.ts";
+import { projectsCommand, readProjects, registryPath } from "./projects.ts";
 import { sheetCommand } from "./sheet.ts";
 import { readLawbook, resolveSigners, verifyRepo } from "./verify.ts";
 
 const USAGE = `usage: laws [--repo <path>] [--signers <file>] [--server <address> [--phone | --laptop <socket>]] <command>
 
-  status           one line per card: id, grade, state, title
+  status           one line per card: id, grade, state, title (with --all: every registered project)
+  projects         list the registered projects; "projects add <path>" or "projects remove <path>" changes the list
   show <id>        print a card, and its figure if a rendered .txt exists
   sheet <id>       write the law as a readable slide page (use --out <file>); it shows the law, it cannot approve it
   check            run every card's check; ends with ALL LAWS HOLD or SOME LAWS FAIL
@@ -29,6 +31,7 @@ const USAGE = `usage: laws [--repo <path>] [--signers <file>] [--server <address
   --server   the address of the signing server for "sign" and "retire": the cards wait there until
              you approve them, on the phone or with your finger on the laptop
              (default: $LAWS_SIGNER, written as server:<address>)
+  --all      with "status": go through every project in the registry
   --out      with "sheet": the file to write the page to (default: print it)
   --phone    with --server: wait for the phone, and do not offer the finger on the laptop
   --laptop   with --server: the socket of the laptop's fingerprint helper
@@ -39,6 +42,7 @@ type Arguments = {
   signers: string | null;
   laptop: string | null;
   out: string | null;
+  all: boolean;
   server: string | null;
   phone: boolean;
   command: string;
@@ -50,7 +54,7 @@ function readArguments(words: string[]): Arguments {
   const plain: string[] = [];
   for (let i = 0; i < words.length; i++) {
     const word = words[i] ?? "";
-    if (word === "--phone") {
+    if (word === "--phone" || word === "--all") {
       options.set(word, "yes");
     } else if (["--repo", "--signers", "--laptop", "--server", "--out"].includes(word)) {
       const value = words[i + 1];
@@ -70,6 +74,7 @@ function readArguments(words: string[]): Arguments {
     signers: options.get("--signers") ?? null,
     laptop: options.get("--laptop") ?? null,
     out: options.get("--out") ?? null,
+    all: options.has("--all"),
     server: options.get("--server") ?? null,
     phone: options.has("--phone"),
     command,
@@ -78,15 +83,17 @@ function readArguments(words: string[]): Arguments {
 }
 
 async function main(words: string[]): Promise<number> {
-  const { repo, signers, laptop, out, server, phone, command, rest } = readArguments(words);
+  const { repo, signers, laptop, out, all, server, phone, command, rest } = readArguments(words);
   const how = { laptop, server, phone, signersFlag: signers };
   const print = (line: string): void => console.log(line);
-  if (!["show", "sign", "retire", "sheet"].includes(command) && rest.length > 0) {
+  if (!["show", "sign", "retire", "sheet", "projects"].includes(command) && rest.length > 0) {
     throw new LawsError(`"laws ${command}" takes no further words, got: ${rest.join(" ")}`);
   }
   switch (command) {
     case "status":
-      return status(repo, signers, print);
+      return all ? statusAll(signers, print) : status(repo, signers, print);
+    case "projects":
+      return projectsCommand(rest, print);
     case "show":
       return show(repo, rest, print);
     case "sheet":
@@ -143,6 +150,27 @@ function status(repo: string, signersFlag: string | null, print: (line: string) 
   if (cards.length === 0) print("no law cards in laws/");
   for (const note of book.notes) print(note);
   return 0;
+}
+
+// laws status --all: every registered project, one block each. A project that cannot be read does not stop the rest.
+function statusAll(signersFlag: string | null, print: (line: string) => void): number {
+  const projects = readProjects(registryPath());
+  if (projects.length === 0) {
+    print("no projects yet. Add one: laws projects add <path>");
+    return 0;
+  }
+  let problems = 0;
+  for (const project of projects) {
+    print(`== ${project}`);
+    try {
+      status(project, signersFlag, print);
+    } catch (error) {
+      if (!(error instanceof LawsError)) throw error;
+      problems += 1;
+      print(`  cannot be read: ${error.message}`);
+    }
+  }
+  return problems === 0 ? 0 : 1;
 }
 
 function show(repo: string, rest: string[], print: (line: string) => void): number {
