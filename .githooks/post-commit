@@ -1,0 +1,3 @@
+#!/usr/bin/env bash
+# Keep the links in ~/.claude in step with skills/ (see skills/install.sh).
+exec "$(git rev-parse --show-toplevel)/skills/install.sh" --quiet

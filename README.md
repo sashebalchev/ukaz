@@ -1,3 +1,29 @@
+# ukaz (указ, "decree")
+
+Laws first, for software that agents write: the laws are written in plain words, you read and sign them, a fixed
+checker decides whether the code keeps them, and the skills around them run the whole flow. The command is `laws`.
+
+```
+src/       the `laws` command: status, show, check, bite, gate, verify, sign, retire, sheet, projects
+server/    the signing server (runs at home) and its phone page
+signer/    the laptop's fingerprint helper
+lean/      the proof half of a law: the gate (laws-lean), its tests; examples/pacer is a working law
+src/sheet.ts   `laws sheet <id>`: a law as a slide page (night mode, full screen, examples play one by one)
+skills/    the flow as Claude Code skills: /ukaz /grill /law /prove /sign (./skills/install.sh links them)
+laws/      this tool's own laws (T-01 to T-11), still unapproved proposals
+examples/  pacer: a Lean law (P-01) with its proof, 13 refuted wrong versions, 25 examples
+```
+
+The flow: `/napkin` an idea, `/grill` it, `/law` writes the sheets, `/sign` shows them and he signs with his phone
+or finger, `/prove` builds under the gate, and `laws check`, `laws bite` and `laws verify` must pass. A project's
+laws live in that project's repo (`laws/<ID>.md`, `laws/<ID>/`, `laws/approvals/`); `laws projects add <path>`
+registers a project and `laws status --all` shows every one. A Lean law is an ordinary card of grade `every-case`
+whose check is `laws-lean gate` (see `lean/README.md`).
+
+What has been tried for real: the tests (149 + 14 more), `nix flake check`, the pacer law end to end (gate and bite).
+What has not: the fingerprint reader, the phone page in a browser, the services running on Berry, a real signature.
+Nothing is approved; no key or signers file exists.
+
 # laws
 
 Law cards for software that agents write.
