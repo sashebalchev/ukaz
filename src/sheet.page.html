@@ -1,0 +1,72 @@
+<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>__TITLE__</title>
+<style>
+:root{--bg:#f7f5f0;--ink:#1a1a18;--mute:#6b6b64;--panel:#efece4;--line:#d8d3c6;--ok:#0a7a50;--no:#c4401c}
+html.dark{--bg:#0f0f10;--ink:#ece9e1;--mute:#9a978f;--panel:#1a1a1c;--line:#2e2e32;--ok:#4cc38a;--no:#ff7a59}
+*{box-sizing:border-box}html,body{height:100%;margin:0}
+body{background:var(--bg);color:var(--ink);font:18px/1.5 "Noto Sans",system-ui,sans-serif;overflow:hidden}
+#stage{position:fixed;inset:0 0 52px 0}
+.slide{position:absolute;inset:0;padding:5vh 7vw 2vh;display:none;flex-direction:column;overflow:auto}
+.slide.on{display:flex}
+.kicker{font:13px/1 ui-monospace,Menlo,monospace;letter-spacing:.08em;text-transform:uppercase;color:var(--mute)}
+h1{font-size:clamp(34px,5.4vw,76px);line-height:1.05;margin:.35em 0 .25em}
+h2{font-size:clamp(24px,3.4vw,46px);line-height:1.1;margin:.3em 0 .2em}
+h3{font-size:1.1em;margin:1em 0 .2em}
+.big{font-size:clamp(24px,3.2vw,46px);line-height:1.25;max-width:30ch}
+.big span,.col li,.row,.mach li{opacity:0;transform:translateY(8px);transition:opacity .45s,transform .45s}
+.shown{opacity:1!important;transform:none!important}
+.mute{color:var(--mute)}.sub{font-size:clamp(16px,1.8vw,24px);color:var(--mute);max-width:46ch}
+.cols{display:grid;grid-template-columns:1fr 1fr;gap:4vw;margin-top:3vh}
+.col h2{margin-top:0}.col ul,.mach ul{padding-left:1.1em;margin:0}.col li{margin:.7em 0;font-size:clamp(15px,1.6vw,22px)}
+.col.no h2{color:var(--no)}.col.ok h2{color:var(--ok)}
+.ex{margin-top:2vh;display:flex;flex-direction:column;gap:6px}
+.row{display:grid;grid-template-columns:7.5em 1fr;gap:14px;align-items:baseline;padding:8px 12px;border-radius:8px;background:var(--panel);font-size:clamp(14px,1.35vw,19px)}
+.badge{font:700 .8em ui-monospace,Menlo,monospace;text-transform:uppercase;letter-spacing:.06em;padding:3px 8px;border-radius:6px;text-align:center;border:1px solid currentColor}
+.badge.y{color:var(--ok)}.badge.n{color:var(--no)}.badge.o{color:var(--mute)}
+.row small{display:block;color:var(--mute);font:12px ui-monospace,Menlo,monospace;margin-top:2px}
+.plain{max-width:70ch;overflow:auto}.plain p,.plain li{font-size:clamp(14px,1.4vw,19px)}
+code{font:.9em ui-monospace,Menlo,monospace;background:var(--panel);padding:1px 6px;border-radius:4px}
+pre.code{background:var(--panel);border-radius:10px;padding:16px;overflow:auto;font:clamp(11px,1.1vw,15px)/1.5 ui-monospace,Menlo,monospace;margin:1vh 0;flex:1;white-space:pre}
+.mach li{margin:.8em 0;font-size:clamp(15px,1.6vw,22px)}
+.hash{font:clamp(18px,2.4vw,34px) ui-monospace,Menlo,monospace;background:var(--panel);padding:8px 14px;border-radius:8px;display:inline-block}
+.files{columns:2;font:13px ui-monospace,Menlo,monospace;color:var(--mute);margin-top:2vh}
+#bar{position:fixed;left:0;right:0;bottom:0;height:52px;display:flex;align-items:center;gap:14px;padding:0 20px;border-top:1px solid var(--line);background:var(--bg);color:var(--mute);font:13px ui-monospace,Menlo,monospace}
+#bar .grow{flex:1;height:3px;background:var(--line);border-radius:2px;overflow:hidden}#bar .grow i{display:block;height:100%;width:0;background:var(--ink);transition:width .25s}
+#bar button{font:inherit;color:var(--ink);background:var(--panel);border:1px solid var(--line);border-radius:6px;padding:5px 10px;cursor:pointer}
+@media (prefers-reduced-motion:reduce){.big span,.col li,.row,.mach li{opacity:1;transform:none;transition:none}#bar .grow i{transition:none}}
+</style></head><body><div id="stage"></div>
+<div id="bar"><button id="prev" title="Back">←</button><button id="next" title="Next">→</button><button id="again" title="Play this slide again">↺</button><span id="count"></span><span class="grow"><i></i></span><span>F full screen · D night · R replay · a reading aid only: it cannot approve</span><button id="dk">Night</button><button id="fs">Full screen</button></div>
+<script>
+const S=__DATA__;
+const stage=document.getElementById('stage');
+const esc=t=>String(t).replace(/&/g,'&amp;').replace(/</g,'&lt;');
+const md=t=>esc(t).replace(/\*\*(.+?)\*\*/g,'<b>$1</b>').replace(/\x60(.+?)\x60/g,'<code>$1</code>');
+const reduce=matchMedia('(prefers-reduced-motion: reduce)').matches;
+const el=(s)=>{const d=document.createElement('section');d.className='slide';
+ if(s.kind==='title')d.innerHTML='<div class="kicker">Law '+esc(s.id)+' · grade '+esc(s.grade)+'</div><h1>'+esc(s.title)+'</h1><div class="sub">'+esc(s.meaning)+'</div><p class="mute" style="margin-top:3vh">What you sign is the exact text, its files and this fingerprint: <code>'+esc(s.hash)+'</code></p>';
+ else if(s.kind==='text')d.innerHTML='<div class="kicker">'+esc(s.label)+'</div><div class="big">'+s.sentences.map(x=>'<span>'+md(x)+' </span>').join('')+'</div>';
+ else if(s.kind==='cases')d.innerHTML='<div class="kicker">The edges of the law</div><div class="cols"><div class="col no"><h2>Refused</h2><ul>'+s.blocked.map(x=>'<li>'+md(x)+'</li>').join('')+'</ul></div><div class="col ok"><h2>Allowed</h2><ul>'+s.allowed.map(x=>'<li>'+md(x)+'</li>').join('')+'</ul></div></div>';
+ else if(s.kind==='examples')d.innerHTML='<div class="kicker">Examples, one by one</div><h2>Do you agree with each answer?</h2><div class="ex">'+s.rows.map(r=>'<div class="row"><span class="badge '+(r.badge==='allowed'?'y':r.badge==='refused'?'n':'o')+'">'+esc(r.badge||'case')+'</span><span>'+esc(r.why)+'<small>'+esc(r.text)+'</small></span></div>').join('')+'</div>';
+ else if(s.kind==='plain')d.innerHTML='<div class="kicker">In plain words, written by a second reader</div><div class="plain">'+s.html+'</div>';
+ else if(s.kind==='machine')d.innerHTML='<div class="kicker">What the machine checks, so you do not have to</div><div class="mach"><ul>'+s.lines.map(x=>'<li>'+md(x)+'</li>').join('')+'</ul></div>';
+ else if(s.kind==='code')d.innerHTML='<div class="kicker">'+esc(s.label)+'</div><pre class="code">'+esc(s.code)+'</pre>';
+ else d.innerHTML='<div class="kicker">What you sign</div><h2>Approve it only if you would say yes to every slide.</h2><p class="mute">The fingerprint of the law and everything it covers:</p><div class="hash">'+esc(s.hash)+'</div><div class="files">'+s.files.map(f=>'<div>'+esc(f)+'</div>').join('')+'</div><p class="mute">Approving is <code>laws sign</code>, on the phone or with your finger. This page cannot do it.</p>';
+ return d};
+S.forEach(s=>stage.appendChild(el(s)));
+const slides=[...stage.children];let cur=-1,timers=[];
+const parts=(d)=>[...d.querySelectorAll('.big span,.col li,.row,.mach li')];
+function play(d){timers.forEach(clearTimeout);timers=[];const ps=parts(d);ps.forEach(p=>p.classList.remove('shown'));
+ if(reduce){ps.forEach(p=>p.classList.add('shown'));return}
+ const step=d.querySelector('.ex')?900:d.querySelector('.big')?700:450;
+ ps.forEach((p,i)=>timers.push(setTimeout(()=>{p.classList.add('shown');if(d.querySelector('.ex'))p.scrollIntoView({block:'nearest',behavior:'smooth'})},250+i*step)))}
+function show(n){n=Math.max(0,Math.min(S.length-1,n));if(n===cur)return;if(cur>=0)slides[cur].classList.remove('on');cur=n;slides[cur].classList.add('on');play(slides[cur]);history.replaceState(null,'','#'+(cur+1));
+ document.getElementById('count').textContent=(cur+1)+' / '+S.length;document.querySelector('#bar .grow i').style.width=((cur+1)/S.length*100)+'%'}
+const dark=()=>document.documentElement.classList.contains('dark');
+function setDark(v){document.documentElement.classList.toggle('dark',v);localStorage.setItem('laws-dark',v?'1':'0');document.getElementById('dk').textContent=v?'Day':'Night'}
+async function fs(){if(document.fullscreenElement)await document.exitFullscreen();else await document.documentElement.requestFullscreen()}
+document.getElementById('next').onclick=()=>show(cur+1);document.getElementById('prev').onclick=()=>show(cur-1);document.getElementById('again').onclick=()=>play(slides[cur]);
+document.getElementById('dk').onclick=()=>setDark(!dark());document.getElementById('fs').onclick=fs;
+addEventListener('keydown',e=>{const k=e.key;if(k==='ArrowRight'||k===' '||k==='PageDown'){e.preventDefault();show(cur+1)}else if(k==='ArrowLeft'||k==='PageUp'){e.preventDefault();show(cur-1)}else if(k==='Home')show(0);else if(k==='End')show(S.length-1);else if(k==='f'||k==='F')fs();else if(k==='d'||k==='D')setDark(!dark());else if(k==='r'||k==='R')play(slides[cur])});
+let x0=null;addEventListener('touchstart',e=>x0=e.touches[0].clientX);addEventListener('touchend',e=>{if(x0===null)return;const dx=e.changedTouches[0].clientX-x0;if(Math.abs(dx)>50)show(cur+(dx<0?1:-1));x0=null});
+const saved=localStorage.getItem('laws-dark');setDark(saved===null?matchMedia('(prefers-color-scheme: dark)').matches:saved==='1');
+show((parseInt(location.hash.slice(1))||1)-1);
+</script></body></html>

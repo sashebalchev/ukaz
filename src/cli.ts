@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { biteCommand } from "./bite.ts";
 import { CardError, ID_PATTERN, parseCard, renderedFigure } from "./card.ts";
@@ -7,12 +7,14 @@ import { LawsError, loadCards } from "./cards.ts";
 import { checkCommand } from "./check.ts";
 import { gate } from "./gate.ts";
 import { retireCommand, signCommand } from "./sign.ts";
+import { sheetCommand } from "./sheet.ts";
 import { readLawbook, resolveSigners, verifyRepo } from "./verify.ts";
 
 const USAGE = `usage: laws [--repo <path>] [--signers <file>] [--server <address> [--phone | --laptop <socket>]] <command>
 
   status           one line per card: id, grade, state, title
   show <id>        print a card, and its figure if a rendered .txt exists
+  sheet <id>       write the law as a readable slide page (use --out <file>); it shows the law, it cannot approve it
   check            run every card's check; ends with ALL LAWS HOLD or SOME LAWS FAIL
   bite             run every card's bite; each one must fail and print the card's bite-says text
   gate             print "open" if every card is approved as it is now and none is missing,
@@ -27,6 +29,7 @@ const USAGE = `usage: laws [--repo <path>] [--signers <file>] [--server <address
   --server   the address of the signing server for "sign" and "retire": the cards wait there until
              you approve them, on the phone or with your finger on the laptop
              (default: $LAWS_SIGNER, written as server:<address>)
+  --out      with "sheet": the file to write the page to (default: print it)
   --phone    with --server: wait for the phone, and do not offer the finger on the laptop
   --laptop   with --server: the socket of the laptop's fingerprint helper
              (default: /run/laws-signer/socket, if it is there)`;
@@ -35,6 +38,7 @@ type Arguments = {
   repo: string;
   signers: string | null;
   laptop: string | null;
+  out: string | null;
   server: string | null;
   phone: boolean;
   command: string;
@@ -48,7 +52,7 @@ function readArguments(words: string[]): Arguments {
     const word = words[i] ?? "";
     if (word === "--phone") {
       options.set(word, "yes");
-    } else if (["--repo", "--signers", "--laptop", "--server"].includes(word)) {
+    } else if (["--repo", "--signers", "--laptop", "--server", "--out"].includes(word)) {
       const value = words[i + 1];
       if (value === undefined || options.has(word)) throw new LawsError(`${word} needs one value, once.\n\n${USAGE}`);
       options.set(word, value);
@@ -65,6 +69,7 @@ function readArguments(words: string[]): Arguments {
     repo: resolve(options.get("--repo") ?? "."),
     signers: options.get("--signers") ?? null,
     laptop: options.get("--laptop") ?? null,
+    out: options.get("--out") ?? null,
     server: options.get("--server") ?? null,
     phone: options.has("--phone"),
     command,
@@ -73,10 +78,10 @@ function readArguments(words: string[]): Arguments {
 }
 
 async function main(words: string[]): Promise<number> {
-  const { repo, signers, laptop, server, phone, command, rest } = readArguments(words);
+  const { repo, signers, laptop, out, server, phone, command, rest } = readArguments(words);
   const how = { laptop, server, phone, signersFlag: signers };
   const print = (line: string): void => console.log(line);
-  if (!["show", "sign", "retire"].includes(command) && rest.length > 0) {
+  if (!["show", "sign", "retire", "sheet"].includes(command) && rest.length > 0) {
     throw new LawsError(`"laws ${command}" takes no further words, got: ${rest.join(" ")}`);
   }
   switch (command) {
@@ -84,6 +89,8 @@ async function main(words: string[]): Promise<number> {
       return status(repo, signers, print);
     case "show":
       return show(repo, rest, print);
+    case "sheet":
+      return sheetCommand(repo, rest[0], out, print, (path, text) => writeFileSync(path, text));
     case "check":
       return checkCommand(repo, print);
     case "bite":

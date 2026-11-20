@@ -35,6 +35,7 @@
               ./src
               ./signer
               ./server
+              ./lean
               ./package.json
             ];
           };
@@ -44,7 +45,7 @@
           installPhase = ''
             runHook preInstall
             mkdir -p $out/lib/laws $out/bin
-            cp -r src signer server package.json $out/lib/laws/
+            cp -r src signer server lean package.json $out/lib/laws/
             substituteInPlace $out/lib/laws/signer/laptop.ts $out/lib/laws/src/approvals.ts \
               --replace-fail 'const SSH_KEYGEN = "ssh-keygen";' 'const SSH_KEYGEN = "${pkgs.openssh}/bin/ssh-keygen";'
             ${lib.optionalString (fprintd != null) ''
@@ -74,8 +75,11 @@
           description = "Law cards with a check, a bite and a signed approval";
           commands = {
             laws = "src/cli.ts";
+            laws-lean = "lean/gate.ts";
           };
           flags.laws = "--suffix PATH : ${lib.makeBinPath [ pkgs.bash ]}";
+          # The Lean half of a law needs Lean, the comparator's sandbox, and a few shell tools (sed, cp).
+          flags.laws-lean = "--prefix PATH : ${lib.makeBinPath [ pkgs.lean4 pkgs.bubblewrap pkgs.bash pkgs.coreutils pkgs.gnused ]}";
         };
 
       # The laptop's fingerprint helper. It needs the fprintd of the machine it runs on.
