@@ -7,6 +7,7 @@ import { LawsError, loadCards } from "./cards.ts";
 import { checkCommand } from "./check.ts";
 import { gate } from "./gate.ts";
 import { retireCommand, signCommand } from "./sign.ts";
+import { initCommand } from "./init.ts";
 import { projectsCommand, readProjects, registryPath } from "./projects.ts";
 import { sheetCommand } from "./sheet.ts";
 import { readLawbook, resolveSigners, verifyRepo } from "./verify.ts";
@@ -14,6 +15,7 @@ import { readLawbook, resolveSigners, verifyRepo } from "./verify.ts";
 const USAGE = `usage: laws [--repo <path>] [--signers <file>] [--server <address> [--phone | --laptop <socket>]] <command>
 
   status           one line per card: id, grade, state, title (with --all: every registered project)
+  init [<path>]    set a project up for laws: laws/ and the CI check (--register also adds it to the registry)
   projects         list the registered projects; "projects add <path>" or "projects remove <path>" changes the list
   show <id>        print a card, and its figure if a rendered .txt exists
   sheet <id>       write the law as a readable slide page (use --out <file>); it shows the law, it cannot approve it
@@ -31,6 +33,7 @@ const USAGE = `usage: laws [--repo <path>] [--signers <file>] [--server <address
   --server   the address of the signing server for "sign" and "retire": the cards wait there until
              you approve them, on the phone or with your finger on the laptop
              (default: $LAWS_SIGNER, written as server:<address>)
+  --register with "init": also register the project
   --all      with "status": go through every project in the registry
   --out      with "sheet": the file to write the page to (default: print it)
   --phone    with --server: wait for the phone, and do not offer the finger on the laptop
@@ -43,6 +46,7 @@ type Arguments = {
   laptop: string | null;
   out: string | null;
   all: boolean;
+  register: boolean;
   server: string | null;
   phone: boolean;
   command: string;
@@ -54,7 +58,7 @@ function readArguments(words: string[]): Arguments {
   const plain: string[] = [];
   for (let i = 0; i < words.length; i++) {
     const word = words[i] ?? "";
-    if (word === "--phone" || word === "--all") {
+    if (word === "--phone" || word === "--all" || word === "--register") {
       options.set(word, "yes");
     } else if (["--repo", "--signers", "--laptop", "--server", "--out"].includes(word)) {
       const value = words[i + 1];
@@ -75,6 +79,7 @@ function readArguments(words: string[]): Arguments {
     laptop: options.get("--laptop") ?? null,
     out: options.get("--out") ?? null,
     all: options.has("--all"),
+    register: options.has("--register"),
     server: options.get("--server") ?? null,
     phone: options.has("--phone"),
     command,
@@ -83,10 +88,10 @@ function readArguments(words: string[]): Arguments {
 }
 
 async function main(words: string[]): Promise<number> {
-  const { repo, signers, laptop, out, all, server, phone, command, rest } = readArguments(words);
+  const { repo, signers, laptop, out, all, register, server, phone, command, rest } = readArguments(words);
   const how = { laptop, server, phone, signersFlag: signers };
   const print = (line: string): void => console.log(line);
-  if (!["show", "sign", "retire", "sheet", "projects"].includes(command) && rest.length > 0) {
+  if (!["show", "sign", "retire", "sheet", "projects", "init"].includes(command) && rest.length > 0) {
     throw new LawsError(`"laws ${command}" takes no further words, got: ${rest.join(" ")}`);
   }
   switch (command) {
@@ -94,6 +99,8 @@ async function main(words: string[]): Promise<number> {
       return all ? statusAll(signers, print) : status(repo, signers, print);
     case "projects":
       return projectsCommand(rest, print);
+    case "init":
+      return initCommand(rest, repo, register, print);
     case "show":
       return show(repo, rest, print);
     case "sheet":
