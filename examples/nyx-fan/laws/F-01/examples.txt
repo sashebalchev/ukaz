@@ -1,0 +1,24 @@
+# temperature (whole degrees) | fan speed (percent) | why. Every speed was checked with Lean on the table in curve.json.
+0 | 0 | The coolest point in the table: the fan is off.
+40 | 0 | A cool laptop: the fan is off.
+55 | 0 | Exactly 55 degrees: still off.
+56 | 4 | One degree above 55: the fan comes on at once, at 4 percent (the line from 0 at 55 up to 30 at 62, rounded down from 4.3).
+58 | 12 | Three degrees above 55 on the line to 30 at 62: 12 percent, rounded down from 12.9.
+61 | 25 | One degree below 62: 25 percent (rounded down from 25.7), still under 30.
+62 | 30 | Exactly 62 degrees: 30 percent, the quiet level the law asks for from here on.
+65 | 30 | Between 62 and 76 the table is flat: 30 percent.
+70 | 30 | Still 30 percent: never louder than 30 up to 76.
+76 | 30 | Exactly 76 degrees: the last temperature where the fan is limited to 30 percent, and it is exactly 30.
+77 | 32 | One degree above 76: the fan starts to speed up (32 percent).
+79 | 36 | Climbing towards 38 percent, rounded down: 36.
+80 | 38 | Exactly 80 degrees: 38 percent, the minimum the law asks for from here.
+82 | 45 | Halfway between 80 and 84: 45 percent (rounded down from 45.0).
+83 | 48 | Three quarters of the way to 84: 48 percent.
+84 | 52 | A point of the table: 52 percent.
+85 | 58 | A third of the way from 84 to 87 (52 to 72): 58 percent, rounded down from 58.67.
+86 | 65 | Two thirds of the way: 65 percent, rounded down from 65.33.
+87 | 72 | A point of the table: 72 percent.
+89 | 90 | Two thirds of the way from 72 to 100: 90 percent, rounded down from 90.67.
+90 | 100 | Exactly 90 degrees: full speed, 100 percent.
+95 | 100 | Above 90: still full speed.
+150 | 100 | Far above the last point: the speed stays at the last point, 100 percent.

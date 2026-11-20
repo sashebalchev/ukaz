@@ -1,0 +1,30 @@
+{
+  "minBites": 8,
+  "minExamples": 12,
+  "data": {
+    "json": "curve.json",
+    "lean": "Data.lean",
+    "module": "FanData",
+    "name": "quietCurve",
+    "columns": [
+      "temp",
+      "speed"
+    ],
+    "fresh": "nix eval --json \"git+file:///home/alex/nixos-config?rev=7f5c950a72db403d2824f67cba057cadd7ed09f9#nixosConfigurations.framework.config.hardware.fw-fanctrl.config.strategies.quiet.speedCurve\""
+  },
+  "examples": {
+    "columns": [
+      "temp",
+      "speed",
+      "why"
+    ],
+    "stdin": "",
+    "stdout": "",
+    "kernel": "Fan.speed FanData.quietCurve {temp} = {speed}",
+    "module": "Challenge"
+  },
+  "sheet": {
+    "badgeColumn": "speed",
+    "badgeSuffix": " %"
+  }
+}

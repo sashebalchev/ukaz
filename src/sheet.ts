@@ -64,7 +64,7 @@ export function slidesOf(repo: string, id: string): Slide[] {
   const folder = join(repo, "laws", id);
   const lawFile = join(folder, "law.json");
   if (existsSync(join(folder, "examples.txt")) && existsSync(lawFile)) {
-    const law = JSON.parse(readFileSync(lawFile, "utf8")) as { examples?: { columns: string[] }; sheet?: { yes?: string; no?: string } };
+    const law = JSON.parse(readFileSync(lawFile, "utf8")) as { examples?: { columns: string[] }; sheet?: { yes?: string; no?: string; badgeColumn?: string; badgeSuffix?: string } };
     const columns = law.examples?.columns ?? [];
     const rows = readFileSync(join(folder, "examples.txt"), "utf8").split("\n").filter((l) => l.trim() !== "" && !l.startsWith("#")).map((line) => {
       const cells = line.split("|").map((c) => c.trim());
@@ -73,8 +73,8 @@ export function slidesOf(repo: string, id: string): Slide[] {
       const grew = count(by["result"]) > count(by["h"]);
       const yes = law.sheet?.yes ?? "allowed";
       const no = law.sheet?.no ?? "refused";
-      const shown = columns.filter((c) => c !== "why" && c !== "result").map((c) => `${c} = ${by[c] === "" ? "none" : by[c]}`).join(", ");
-      return { text: shown, badge: columns.includes("result") && columns.includes("h") ? (grew ? yes : no) : "", why: by["why"] ?? "" };
+      const shown = columns.filter((c) => c !== "why" && c !== "result" && c !== law.sheet?.badgeColumn).map((c) => `${c} = ${by[c] === "" ? "none" : by[c]}`).join(", ");
+      return { text: shown, badge: law.sheet?.badgeColumn ? `${by[law.sheet.badgeColumn] ?? ""}${law.sheet.badgeSuffix ?? ""}` : columns.includes("result") && columns.includes("h") ? (grew ? yes : no) : "", why: by["why"] ?? "" };
     });
     if (rows.length > 0) slides.push({ kind: "examples", rows });
   }

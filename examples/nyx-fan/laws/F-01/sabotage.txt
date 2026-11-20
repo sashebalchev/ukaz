@@ -1,0 +1,5 @@
+# One broken edit per line: the gate must reject each one. Format: Data: <sed -E expression> (changes curve.json)
+# Moving the 62-degree point to 70 means the fan is still off at 62, which breaks "from 62 the fan runs at 30 percent or more".
+Data: s/"temp": 62/"temp": 70/
+# A top speed of 60 instead of 100 breaks "from 90 degrees full speed".
+Data: s/"speed": 100/"speed": 60/

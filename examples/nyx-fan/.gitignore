@@ -1,0 +1,4 @@
+.lake/
+lake-manifest.json
+Data.lean
+laws/F-01/Data.lean

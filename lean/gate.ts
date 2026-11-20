@@ -29,8 +29,12 @@ const FORBIDDEN = [
 const ALLOWED_AXIOMS = new Set(["propext", "Quot.sound", "Classical.choice"]);
 const STEP_SECONDS = 300;
 
-type Law = { exe?: string; minBites?: number; minExamples?: number; unique?: string; examples?: Examples };
-type Examples = { columns: string[]; stdin: string; stdout: string; kernel?: string };
+// data: a table the law is about, taken from the real system. It is frozen with the law as a JSON file; the gate turns it
+// into a Lean module (never edited by hand) and, if "fresh" is given, runs that command and fails when the system no
+// longer says the same thing, so a change to the system voids the law until it is read and signed again.
+type Data = { json: string; lean: string; module: string; name: string; columns: string[]; fresh?: string };
+type Law = { exe?: string; minBites?: number; minExamples?: number; unique?: string; examples?: Examples; data?: Data };
+type Examples = { columns: string[]; stdin: string; stdout: string; kernel?: string; module?: string };
 type Verdict = { ok: boolean; reason: string };
 
 // ---- reading Lean text without its comments and strings, so a word in a comment does not trip the gate ----
@@ -75,43 +79,98 @@ async function toolchainProblem(dir: string): Promise<string | null> {
   return have === pinned ? null : `lean-toolchain pins ${pinned} but ${have} is installed`;
 }
 
-const AUTHOR_FILES = ["Challenge.lean", "comparator.json", "lakefile.toml", "lean-toolchain", "law.json", "Paraphrase.md", "examples.txt", "Bites.lean", "Unique.lean"];
+// Writes the Lean module for the law's data from its JSON file. Returns a problem, or null.
+export function prepareData(dir: string, law: Law): string | null {
+  const data = law.data;
+  if (data === undefined) return null;
+  let rows: unknown;
+  try { rows = JSON.parse(readFileSync(join(dir, data.json), "utf8")); } catch { return `${data.json} is missing or is not JSON`; }
+  if (!Array.isArray(rows)) return `${data.json} must be a list`;
+  const tuples: string[] = [];
+  for (const row of rows as Record<string, unknown>[]) {
+    const cells = data.columns.map((c) => row[c]);
+    if (!cells.every((v) => typeof v === "number" && Number.isInteger(v) && v >= 0)) return `${data.json}: every row needs whole numbers, 0 or more, in ${data.columns.join(", ")}`;
+    tuples.push(`(${cells.join(", ")})`);
+  }
+  const arity = data.columns.length === 1 ? "Nat" : data.columns.map(() => "Nat").join(" × ");
+  writeFileSync(join(dir, data.lean), `-- Generated from ${data.json} by the gate. Do not edit.\nnamespace ${data.module}\n\ndef ${data.name} : List (${arity}) := [${tuples.join(", ")}]\n\nend ${data.module}\n`);
+  return null;
+}
+
+// The data must still be what the system says. Returns a problem, or null.
+async function staleData(dir: string, law: Law): Promise<string | null> {
+  const data = law.data;
+  if (data?.fresh === undefined) return null;
+  const run = await runCommand(data.fresh, dir, 180);
+  if (run.exitCode !== 0) return `could not ask the system for its data: ${run.output.trim().split("\n").slice(-2).join(" | ")}`;
+  let now: unknown;
+  try { now = JSON.parse(run.output.slice(run.output.indexOf("[")).trim()); } catch { return "the system's answer is not JSON"; }
+  const mine = JSON.parse(readFileSync(join(dir, data.json), "utf8")) as unknown;
+  const norm = (v: unknown) => JSON.stringify(v, (_k, x: unknown) => (x && typeof x === "object" && !Array.isArray(x) ? Object.fromEntries(Object.entries(x).sort(([a], [b]) => a.localeCompare(b))) : x));
+  return norm(now) === norm(mine) ? null : `the data in ${data.json} is not what the system says now. Extract it again, read the law again and sign it again.`;
+}
+
+const AUTHOR_FILES = ["Challenge.lean", "comparator.json", "lakefile.toml", "lean-toolchain", "law.json", "Paraphrase.md", "examples.txt", "Bites.lean"];
+// Unique.lean (the law fixes one behaviour) belongs to laws about a function; a law about a given table has none.
+const authorFiles = (law: Law): string[] => [...AUTHOR_FILES, ...(law.unique ? ["Unique.lean"] : [])];
 
 // Everything that can be checked before a solution exists: the pinned toolchain, the author's files build, only the
 // statement uses sorry, and the law is strong. This is what lets a law be read, bitten and signed before anyone builds.
 export async function statementChecks(dir: string, say: (line: string) => void): Promise<Verdict> {
-  for (const name of AUTHOR_FILES) if (!existsSync(join(dir, name))) return { ok: false, reason: `${name} is missing in ${dir}` };
+  if (!existsSync(join(dir, "law.json"))) return { ok: false, reason: `law.json is missing in ${dir}` };
   const law = JSON.parse(readFileSync(join(dir, "law.json"), "utf8")) as Law;
+  for (const name of authorFiles(law)) if (!existsSync(join(dir, name))) return { ok: false, reason: `${name} is missing in ${dir}` };
   const wrong = await toolchainProblem(dir);
   if (wrong !== null) return { ok: false, reason: wrong };
+  const dataProblem = prepareData(dir, law);
+  if (dataProblem !== null) return { ok: false, reason: dataProblem };
+  const stale = await staleData(dir, law);
+  if (stale !== null) return { ok: false, reason: stale };
   say("== the statement and the author's files build");
-  const built = await lake(dir, "build Challenge Bites Unique");
+  const built = await lake(dir, `build Challenge Bites${law.unique ? " Unique" : ""}`);
   if (built.exitCode !== 0) return { ok: false, reason: `the build failed: ${built.output.trim().split("\n").slice(-6).join(" | ")}` };
   const sorried = /(Bites|Unique)\.lean:\d+:\d+: warning: declaration uses/.exec(built.output);
   if (sorried) return { ok: false, reason: `a declaration in ${sorried[1]}.lean uses sorry` };
-  return strong(dir, law, say);
+  const strongVerdict = await strong(dir, law, say);
+  if (!strongVerdict.ok) return strongVerdict;
+  // When the examples only use the statement's own definitions, they are part of what is signed and are checked now.
+  if (law.examples?.kernel && law.examples.module === "Challenge") {
+    say("== every example row holds for the kernel");
+    const rowsOk = await examples(dir, law, true);
+    rmSync(join(dir, "ExamplesCheck.lean"), { force: true });
+    if (!rowsOk.ok) return rowsOk;
+    say(`   ${rowsOk.reason}`);
+  }
+  return { ok: true, reason: "the statement checks out" };
 }
 
 export async function gate(dir: string, say: (line: string) => void): Promise<Verdict> {
   const fail = (reason: string): Verdict => ({ ok: false, reason });
-  for (const name of ["Challenge.lean", "comparator.json", "lakefile.toml", "lean-toolchain", "law.json", "Paraphrase.md", "examples.txt", "Bites.lean", "Unique.lean", "Solution.lean"]) {
+  if (!existsSync(join(dir, "law.json"))) return fail(`law.json is missing in ${dir}`);
+  const law = JSON.parse(readFileSync(join(dir, "law.json"), "utf8")) as Law;
+  for (const name of [...authorFiles(law), "Solution.lean"]) {
     if (!existsSync(join(dir, name))) return fail(`${name} is missing in ${dir}`);
   }
-  const law = JSON.parse(readFileSync(join(dir, "law.json"), "utf8")) as Law;
   const generated = ["AxiomsCheck.lean", "ExamplesCheck.lean"].map((n) => join(dir, n));
+  const dataProblem = prepareData(dir, law);
+  if (dataProblem !== null) return fail(dataProblem);
   try {
     say("== 1. the toolchain is the pinned one");
     const wrong = await toolchainProblem(dir);
     if (wrong !== null) return fail(wrong);
 
+    const stale = await staleData(dir, law);
+    if (stale !== null) return fail(stale);
+
     say("== 2. the agent's files use nothing the gate bans");
     const mainExists = existsSync(join(dir, "Main.lean"));
-    const bad = forbidden("Solution.lean", readFileSync(join(dir, "Solution.lean"), "utf8"), ["Std", "Init"])
-      ?? (mainExists ? forbidden("Main.lean", readFileSync(join(dir, "Main.lean"), "utf8"), ["Std", "Init", "Solution"]) : null);
+    const dataModules = law.data ? [law.data.module === "Data" ? "Data" : law.data.lean.replace(/\.lean$/, "")] : [];
+    const bad = forbidden("Solution.lean", readFileSync(join(dir, "Solution.lean"), "utf8"), ["Std", "Init", ...dataModules])
+      ?? (mainExists ? forbidden("Main.lean", readFileSync(join(dir, "Main.lean"), "utf8"), ["Std", "Init", "Solution", ...dataModules]) : null);
     if (bad !== null) return fail(`forbidden construct: ${bad}`);
 
     say("== 3. everything builds, and nothing but the statement uses sorry");
-    const targets = ["Challenge", "Solution", "Bites", "Unique", ...(law.exe ? [law.exe] : [])].join(" ");
+    const targets = ["Challenge", "Solution", "Bites", ...(law.unique ? ["Unique"] : []), ...(law.exe ? [law.exe] : [])].join(" ");
     const built = await lake(dir, `build ${targets}`);
     if (built.exitCode !== 0) return fail(`the build failed: ${built.output.trim().split("\n").slice(-6).join(" | ")}`);
     const sorried = /(Solution|Bites|Unique|Main)\.lean:\d+:\d+: warning: declaration uses/.exec(built.output);
@@ -143,12 +202,13 @@ export async function gate(dir: string, say: (line: string) => void): Promise<Ve
 async function strong(dir: string, law: Law, say: (line: string) => void): Promise<Verdict> {
   const fail = (reason: string): Verdict => ({ ok: false, reason });
   say("== the law is strong: wrong versions are refuted, one behaviour is fixed, no sorry or extra axioms");
-  const names = ["Bites.lean", "Unique.lean"].flatMap((f) => [...readFileSync(join(dir, f), "utf8").matchAll(/^theorem\s+([A-Za-z0-9_.']+)/gm)].map((m) => m[1] ?? ""));
+  const files = ["Bites.lean", ...(law.unique ? ["Unique.lean"] : [])];
+  const names = files.flatMap((f) => [...readFileSync(join(dir, f), "utf8").matchAll(/^theorem\s+([A-Za-z0-9_.']+)/gm)].map((m) => m[1] ?? ""));
   const bites = names.filter((n) => /^bad.*_bad$/.test(n)).length;
   if (bites < (law.minBites ?? 8)) return fail(`only ${bites} wrong versions are refuted; the law asks for ${law.minBites ?? 8}`);
   if (law.unique && !names.includes(law.unique)) return fail(`Unique.lean has no theorem ${law.unique}`);
   const ns = /^namespace\s+(\S+)/m.exec(readFileSync(join(dir, "Bites.lean"), "utf8"))?.[1];
-  writeFileSync(join(dir, "AxiomsCheck.lean"), ["import Bites", "import Unique", ...names.map((n) => `#print axioms ${ns ? ns + "." : ""}${n}`)].join("\n") + "\n");
+  writeFileSync(join(dir, "AxiomsCheck.lean"), ["import Bites", ...(law.unique ? ["import Unique"] : []), ...names.map((n) => `#print axioms ${ns ? ns + "." : ""}${n}`)].join("\n") + "\n");
   const axioms = await lake(dir, "env lean AxiomsCheck.lean");
   rmSync(join(dir, "AxiomsCheck.lean"), { force: true });
   if (axioms.exitCode !== 0) return fail(`could not list axioms: ${axioms.output.trim().split("\n").slice(-3).join(" | ")}`);
@@ -166,7 +226,7 @@ const fill = (template: string, row: Record<string, string>) =>
     return mode === "list" ? value.split(/\s+/).filter(Boolean).join(", ") : value;
   });
 
-async function examples(dir: string, law: Law): Promise<Verdict> {
+async function examples(dir: string, law: Law, kernelOnly = false): Promise<Verdict> {
   const spec = law.examples as Examples;
   const rows = readFileSync(join(dir, "examples.txt"), "utf8").split("\n").filter((l) => l.trim() !== "" && !l.startsWith("#")).map((line) => {
     const cells = line.split("|").map((c) => c.trim());
@@ -175,11 +235,11 @@ async function examples(dir: string, law: Law): Promise<Verdict> {
   if (rows.length < (law.minExamples ?? 10)) return { ok: false, reason: `only ${rows.length} example rows; the law asks for ${law.minExamples ?? 10}` };
   if (spec.kernel) {
     const lines = rows.map((r) => `example : ${fill(spec.kernel as string, r)} := by decide`);
-    writeFileSync(join(dir, "ExamplesCheck.lean"), ["import Solution", "set_option maxRecDepth 20000", ...lines].join("\n") + "\n");
+    writeFileSync(join(dir, "ExamplesCheck.lean"), [`import ${spec.module ?? "Solution"}`, "set_option maxRecDepth 20000", ...lines].join("\n") + "\n");
     const run = await lake(dir, "env lean ExamplesCheck.lean");
     if (run.exitCode !== 0) return { ok: false, reason: `the kernel disagrees with an example row: ${run.output.trim().split("\n").slice(0, 3).join(" | ")}` };
   }
-  if (law.exe) {
+  if (law.exe && !kernelOnly) {
     const input = rows.map((r) => fill(spec.stdin, r).replace(/\s+/g, " ").trim()).join("\n") + "\n";
     writeFileSync(join(dir, ".examples-input"), input);
     const run = await runCommand(`./.lake/build/bin/${law.exe} < .examples-input`, dir, 60); // the built program itself, not "lake exe", which prints build messages
@@ -205,24 +265,25 @@ async function copyOf(dir: string): Promise<string> {
 
 export async function bite(dir: string, say: (line: string) => void): Promise<number> {
   if (!existsSync(join(dir, "Solution.lean"))) return biteBeforeSolution(dir, say);
-  const cheats: { name: string; file: "Solution" | "Main"; edit: (text: string) => string | null; sed?: string }[] = [
+  const cheats: { name: string; file: "Solution" | "Main" | "Data"; edit: (text: string) => string | null; sed?: string }[] = [
     { name: "a proof ends in sorry", file: "Solution", edit: (t) => t + "\ntheorem zz_cheat : False := sorry\n" },
     { name: "a proof uses native_decide", file: "Solution", edit: (t) => t + "\ntheorem zz_cheat : 1 = 1 := by native_decide\n" },
     { name: "an opaque False is introduced", file: "Solution", edit: (t) => t + "\nopaque zz_cheat : False\n" },
   ];
   const sabotage = existsSync(join(dir, "sabotage.txt")) ? readFileSync(join(dir, "sabotage.txt"), "utf8").split("\n").filter((l) => l.trim() !== "" && !l.startsWith("#")) : [];
   for (const line of sabotage) {
-    const m = /^(Solution|Main):\s*(.+)$/.exec(line);
+    const m = /^(Solution|Main|Data):\s*(.+)$/.exec(line);
     if (!m) { say(`sabotage.txt: cannot read the line "${line}"`); return 0; }
-    cheats.push({ name: `edit ${line}`, file: m[1] as "Solution" | "Main", edit: () => null, sed: m[2] as string });
+    cheats.push({ name: `edit ${line}`, file: m[1] as "Solution" | "Main" | "Data", edit: () => null, sed: m[2] as string });
   }
   for (const cheat of cheats) {
     const copy = await copyOf(dir);
     try {
-      const target = join(copy, `${cheat.file}.lean`);
+      const lawCopy = JSON.parse(readFileSync(join(copy, "law.json"), "utf8")) as Law;
+      const target = join(copy, cheat.file === "Data" ? (lawCopy.data?.json ?? "data.json") : `${cheat.file}.lean`);
       const before = readFileSync(target, "utf8");
       if (cheat.sed !== undefined) {
-        await runCommand(`sed -E -i '${cheat.sed.replace(/'/g, "'\\''")}' ${cheat.file}.lean`, copy, 30);
+        await runCommand(`sed -E -i '${cheat.sed.replace(/'/g, "'\\''")}' '${target}'`, copy, 30);
         if (readFileSync(target, "utf8") === before) { say(`NOT APPLIED: ${cheat.name} changed nothing, so it proves nothing`); return 0; }
       } else {
         writeFileSync(target, cheat.edit(before) ?? before);
