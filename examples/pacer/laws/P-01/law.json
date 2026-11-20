@@ -1,0 +1,17 @@
+{
+  "exe": "pacer",
+  "minBites": 8,
+  "minExamples": 20,
+  "unique": "laws_determine",
+  "examples": {
+    "columns": [
+      "now",
+      "h",
+      "result",
+      "why"
+    ],
+    "stdin": "{now} {h}",
+    "stdout": "{result}",
+    "kernel": "Pacer.step {now} [{h:list}] = [{result:list}]"
+  }
+}

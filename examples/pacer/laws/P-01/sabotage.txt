@@ -1,0 +1,7 @@
+# One broken edit per line: the gate must reject each one. Format: <File>: <sed -E expression>
+# The signed hour is 3600 seconds and the signed cap is 40; changing either in the solution's copy of the definitions must be caught.
+Solution: s/count t \(t :: rest\) ≤ 40/count t (t :: rest) ≤ 41/
+Solution: s/decide \(now < t \+ 3600\)/decide (now < t + 3601)/
+# The pacer itself: a cap of 41 breaks the proof; a program that ignores the pacer disagrees with the examples.
+Solution: s/decide \(count now h \+ 1 ≤ 40\)/decide (count now h + 1 ≤ 41)/
+Main: s/Pacer\.step now h/h/

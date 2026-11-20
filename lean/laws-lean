@@ -1,0 +1,7 @@
+#!/usr/bin/env bash
+# laws-lean gate|bite <lawdir>: the Lean half of a law (see gate.ts). Uses the Lean from nixpkgs when none is on PATH.
+# Heavy builds run politely: nice, one command at a time.
+if ! command -v lake >/dev/null 2>&1; then
+  exec nix shell nixpkgs#lean4 nixpkgs#bubblewrap -c "$0" "$@"
+fi
+exec nice -n 19 node "$(dirname "$(readlink -f "$0")")/gate.ts" "$@"
