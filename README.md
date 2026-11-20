@@ -11,7 +11,9 @@ lean/      the proof half of a law: the gate (laws-lean), its tests; examples/pa
 src/sheet.ts   `laws sheet <id>`: a law as a slide page (night mode, full screen, examples play one by one)
 skills/    the flow as Claude Code skills: /ukaz /grill /law /prove /sign (./skills/install.sh links them)
 laws/      this tool's own laws (T-01 to T-11), still unapproved proposals
-examples/  pacer: a Lean law (P-01) with its proof, 13 refuted wrong versions, 25 examples
+examples/  pacer: a Lean law (P-01) with its proof, 13 refuted wrong versions, 25 examples.
+           nyx-fan: the first real laws, drafted for signing: F-01 (the fan curve, a statement for every
+           temperature, tied to fan-curve.nix; 12 refuted wrong tables) and F-03 (cannot be met today)
 ```
 
 The flow: `/napkin` an idea, `/grill` it, `/law` writes the sheets, `/sign` shows them and he signs with his phone
@@ -20,7 +22,7 @@ laws live in that project's repo (`laws/<ID>.md`, `laws/<ID>/`, `laws/approvals/
 registers a project and `laws status --all` shows every one. A Lean law is an ordinary card of grade `every-case`
 whose check is `laws-lean gate` (see `lean/README.md`).
 
-What has been tried for real: the tests (149 + 14 more), `nix flake check`, the pacer law end to end (gate and bite).
+What has been tried for real: 163 tests, `nix flake check`, the pacer law end to end (proof, gate, bite), the fan law's statement and bite (no solution yet: it waits for his signature), the sheets.
 What has not: the fingerprint reader, the phone page in a browser, the services running on Berry, a real signature.
 Nothing is approved; no key or signers file exists.
 
