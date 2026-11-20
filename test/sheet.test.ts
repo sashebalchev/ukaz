@@ -20,7 +20,8 @@ test("the pacer law becomes a title, its sentences, cases, examples, plain words
   const title = slides[0];
   assert.ok(title?.kind === "title" && title.id === "P-01" && title.grade === "every-case" && /^[0-9a-f]{16}$/.test(title.hash));
   const examples = slides.find((s) => s.kind === "examples");
-  assert.ok(examples?.kind === "examples" && examples.rows.length === 25);
+  if (examples?.kind !== "examples") throw new Error("no examples slide");
+  assert.equal(examples.rows.length, 25);
   assert.ok(examples.rows.every((r) => r.badge === "allowed" || r.badge === "refused"));
   assert.equal(examples.rows.filter((r) => r.badge === "refused").length, 13);
   const sign = slides[slides.length - 1];
