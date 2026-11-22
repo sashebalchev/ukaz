@@ -1,3 +1,4 @@
+import { spawnSync } from "node:child_process";
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -9,6 +10,7 @@ import type { GoodCard } from "./cards.ts";
 import { askHelper } from "./laptop.ts";
 import { passkeyProblem } from "./passkey.ts";
 import { postRequest, serverAddress, waitForApproval } from "./client.ts";
+import type { Posted } from "./client.ts";
 import { requestText } from "./request.ts";
 import type { Line } from "./request.ts";
 import { readLawbook, resolveSigners, verifyRepo } from "./verify.ts";
@@ -20,6 +22,7 @@ export type SignRequest = {
   server: string | null; // --server: the address of the signing server
   laptop: string | null; // --laptop: the socket of the laptop's fingerprint helper
   phone: boolean; // --phone: wait for the phone, and do not offer the finger
+  notify: string | null; // --notify: a command that gets the phone address and the list on stdin, e.g. to send them as a message
   signersFlag: string | null;
 };
 
@@ -30,7 +33,7 @@ export const HELPER_SOCKET = "/run/laws-signer/socket";
 // signing server, where the cards wait until you approve them, on the phone or with your finger on the
 // laptop. helper: the socket of the fingerprint helper to ask, or null to wait for the phone only.
 // named: that socket was given with --laptop.
-type Way = { address: string; helper: string | null; named: boolean };
+type Way = { address: string; helper: string | null; named: boolean; notify: string | null };
 
 // One card of a batch: to approve as it is now, or to retire.
 type Asked = { card: GoodCard; retire: boolean };
@@ -125,7 +128,8 @@ function wayOf(request: SignRequest): Way {
     throw new LawsError("LAWS_SIGNER must be server:<address>, the address of the signing server. Nothing was written.");
   }
   const helper = request.phone ? null : (request.laptop ?? HELPER_SOCKET);
-  return { address: value.slice("server:".length), helper, named: request.laptop !== null };
+  const notify = request.notify ?? process.env["LAWS_NOTIFY"] ?? null;
+  return { address: value.slice("server:".length), helper, named: request.laptop !== null, notify: notify === "" ? null : notify };
 }
 
 function pickCards(book: Lawbook, ids: string[]): GoodCard[] {
@@ -232,6 +236,7 @@ async function askServer(repo: string, way: Way, asked: Asked[], print: (line: s
   }
   print("To read and sign on the phone, open this address there:");
   print(`  ${posted.page}`);
+  if (way.notify !== null) notifyPhone(way.notify, posted, print);
 
   let approvedHere = false;
   if (helper !== null) {
@@ -254,6 +259,15 @@ async function askServer(repo: string, way: Way, asked: Asked[], print: (line: s
   const answer = await waitForApproval(base, posted, print);
   const signature = answer.signature === null ? null : Buffer.from(answer.signature, "utf8");
   return { manifest: Buffer.from(answer.manifest, "utf8"), signature, passkey: answer.passkey };
+}
+
+// Hands the phone address and the list to the command the owner chose (--notify or LAWS_NOTIFY), on its standard input, so
+// that it can send them as a message: a link on a screen cannot be copied to a phone. The text carries nothing secret.
+// A command that fails or hangs only costs a note: signing goes on, the address is printed above anyway.
+function notifyPhone(command: string, posted: Posted, print: (line: string) => void): void {
+  const text = ["laws: sign on your phone", posted.page, "", "Compare this list with the one on the phone before you approve:", ...posted.list.map(listLine), ""].join("\n");
+  const run = spawnSync("sh", ["-c", command], { input: text, encoding: "utf8", timeout: 20000 });
+  print(run.status === 0 ? "A message with this address was sent." : `The notify command did not work (${run.error ? run.error.message : `exit ${run.status}`}); use the address above.`);
 }
 
 // The request for these cards, read from the repository now.

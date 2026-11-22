@@ -35,6 +35,8 @@ const USAGE = `usage: laws [--repo <path>] [--signers <file>] [--server <address
              (default: $LAWS_SIGNER, written as server:<address>)
   --register with "init": also register the project
   --all      with "status": go through every project in the registry
+  --notify   with "sign": a command that gets the phone address and the list on its standard input, to send them as
+             a message (default: $LAWS_NOTIFY)
   --out      with "sheet": the file to write the page to (default: print it)
   --phone    with --server: wait for the phone, and do not offer the finger on the laptop
   --laptop   with --server: the socket of the laptop's fingerprint helper
@@ -45,6 +47,7 @@ type Arguments = {
   signers: string | null;
   laptop: string | null;
   out: string | null;
+  notify: string | null;
   all: boolean;
   register: boolean;
   server: string | null;
@@ -60,7 +63,7 @@ function readArguments(words: string[]): Arguments {
     const word = words[i] ?? "";
     if (word === "--phone" || word === "--all" || word === "--register") {
       options.set(word, "yes");
-    } else if (["--repo", "--signers", "--laptop", "--server", "--out"].includes(word)) {
+    } else if (["--repo", "--signers", "--laptop", "--server", "--out", "--notify"].includes(word)) {
       const value = words[i + 1];
       if (value === undefined || options.has(word)) throw new LawsError(`${word} needs one value, once.\n\n${USAGE}`);
       options.set(word, value);
@@ -78,6 +81,7 @@ function readArguments(words: string[]): Arguments {
     signers: options.get("--signers") ?? null,
     laptop: options.get("--laptop") ?? null,
     out: options.get("--out") ?? null,
+    notify: options.get("--notify") ?? null,
     all: options.has("--all"),
     register: options.has("--register"),
     server: options.get("--server") ?? null,
@@ -88,8 +92,8 @@ function readArguments(words: string[]): Arguments {
 }
 
 async function main(words: string[]): Promise<number> {
-  const { repo, signers, laptop, out, all, register, server, phone, command, rest } = readArguments(words);
-  const how = { laptop, server, phone, signersFlag: signers };
+  const { repo, signers, laptop, out, notify, all, register, server, phone, command, rest } = readArguments(words);
+  const how = { laptop, server, phone, notify, signersFlag: signers };
   const print = (line: string): void => console.log(line);
   if (!["show", "sign", "retire", "sheet", "projects", "init"].includes(command) && rest.length > 0) {
     throw new LawsError(`"laws ${command}" takes no further words, got: ${rest.join(" ")}`);

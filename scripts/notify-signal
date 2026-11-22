@@ -1,0 +1,14 @@
+#!/usr/bin/env bash
+# notify-signal: sends its standard input as a Signal message to the owner, through the laptop's Signal bot
+# (signal-cli daemon on 127.0.0.1, owner id in ~/.config/signal-bot/env, see nixos-config modules/home/services/signal-bot.nix).
+# Use it as the notify command of "laws sign":   laws sign --notify scripts/notify-signal ...   or   LAWS_NOTIFY=<path>
+# It prints nothing about the owner's id and exits 1 if the message could not be sent.
+set -u
+PORT="${SIGNAL_CLI_PORT:-8087}"
+ENV_FILE="${SIGNAL_BOT_ENV:-$HOME/.config/signal-bot/env}"
+id=$(sed -n 's/^SIGNAL_SENDER=//p' "$ENV_FILE" 2>/dev/null | head -1)
+[ -n "$id" ] || { echo "no SIGNAL_SENDER in $ENV_FILE" >&2; exit 1; }
+text=$(cat)
+body=$(jq -n --arg to "$id" --arg msg "🤖 $text" '{jsonrpc:"2.0",id:"1",method:"send",params:{recipient:[$to],message:$msg}}') || exit 1
+reply=$(curl -s -m 15 -H 'Content-Type: application/json' -d "$body" "http://127.0.0.1:$PORT/api/v1/rpc") || exit 1
+printf '%s' "$reply" | jq -e '.result' >/dev/null 2>&1 || { echo "signal send failed" >&2; exit 1; }
