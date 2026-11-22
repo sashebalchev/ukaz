@@ -17,7 +17,8 @@ test("init creates the laws folder and the CI check, pinned to one commit, and s
     const workflow = readFileSync(join(dir, ".github/workflows/laws.yml"), "utf8");
     assert.ok(workflow.includes(`ref: ${SHA}`));
     assert.ok(workflow.includes("verify --signers \"$RUNNER_TEMP/allowed_signers\""));
-    assert.ok(workflow.includes("vars.LAWS_SIGNERS") && workflow.includes("secrets.UKAZ_READ_TOKEN"));
+    assert.ok(workflow.includes("vars.LAWS_SIGNERS"));
+    assert.ok(!workflow.includes("UKAZ_READ_TOKEN"), "ukaz is public: no token is needed to fetch it");
     assert.ok(!workflow.includes("laws/allowed_signers"), "the signers file must not come from the repository");
   } finally {
     rmSync(dir, { recursive: true, force: true });

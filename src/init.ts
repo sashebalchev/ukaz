@@ -15,9 +15,8 @@ export type InitResult = { created: string[]; kept: string[] };
 export function workflowText(rev: string): string {
   return [
     "# laws: every law in this repository must be approved exactly as it is now. Made by \"laws init\".",
-    "# Needs: the repository variable LAWS_SIGNERS (the lines of the allowed-signers file: public keys only), and, while the",
-    "# ukaz repository is private, the secret UKAZ_READ_TOKEN (a token with read access to it). Make this check required",
-    "# in the branch rules (Settings, Rules), with no bypass, or an agent can merge without it.",
+    "# Needs: the repository variable LAWS_SIGNERS (the lines of the allowed-signers file: public keys only). Make this check",
+    "# required in the branch rules (Settings, Rules), with no bypass, or an agent can merge without it.",
     "name: laws",
     "on:",
     "  pull_request:",
@@ -37,7 +36,6 @@ export function workflowText(rev: string): string {
     "        with:",
     "          repository: sashebalchev/ukaz",
     `          ref: ${rev}`,
-    "          token: ${{ secrets.UKAZ_READ_TOKEN }}",
     "          path: .laws-tool",
     "      - name: the signers file, outside the repository",
     "        env:",
@@ -86,8 +84,7 @@ export function initCommand(rest: string[], repo: string, register: boolean, pri
   if (register) print(`registered ${addProject(registryPath(), dir)}`);
   print("Next, once per project (only you can do these):");
   print("  1. set the repository variable LAWS_SIGNERS to the lines of /etc/laws/allowed_signers (public keys only)");
-  print("  2. set the secret UKAZ_READ_TOKEN while ukaz is private (a token with read access to it)");
-  print("  3. make the \"verify\" check required in the branch rules, with no bypass");
+  print("  2. make the \"verify\" check required in the branch rules, with no bypass");
   print("Then write the first laws: /grill, then /law.");
   return 0;
 }
